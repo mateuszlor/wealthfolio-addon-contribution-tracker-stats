@@ -39,22 +39,34 @@ export interface ContributionChartProps {
 }
 
 /**
- * Colour for the nth series using the golden angle (≈137.508°).
+ * Colour for the nth series — curated muted palette matching Wealthfolio's
+ * design language (see screenshots). Colours are sophisticated, not pastel:
+ * lower saturation, balanced lightness, good contrast in both themes.
  *
- * The golden angle is an irrational fraction of 360°, so hues never repeat
- * and each new colour lands in the largest gap on the colour wheel. This
- * gives a pleasant, well-separated sequence for any number of accounts.
- * Index 0 starts at 142° (green, the established contribution colour).
- *
- * Pastel tones: low saturation (35%), higher lightness for a calm, readable
- * chart that works in both light and dark mode without vibrating.
+ * Index 0 = green (contributions), then blue, purple, amber, teal, rose...
+ * Beyond the palette length the golden angle takes over so hues never repeat.
  */
 export function seriesColor(index: number): { light: string; dark: string } {
-  const hue = (142 + index * 137.508) % 360;
-  const sat = 35;
+  // Hand-picked muted hues that sit well in Wealthfolio's UI (both light/dark).
+  // Saturation ~25-30%, lightness tuned per hue for consistent perceived brightness.
+  const curated: Array<{ light: string; dark: string }> = [
+    { light: 'hsl(142 28% 38%)', dark: 'hsl(142 28% 52%)' },  // green (contributions)
+    { light: 'hsl(217 30% 42%)', dark: 'hsl(217 30% 58%)' },  // blue
+    { light: 'hsl(262 28% 44%)', dark: 'hsl(262 28% 60%)' },  // purple
+    { light: 'hsl(28 28% 42%)',  dark: 'hsl(28 28% 58%)' },   // amber
+    { light: 'hsl(185 28% 38%)', dark: 'hsl(185 28% 54%)' },  // teal
+    { light: 'hsl(340 26% 42%)', dark: 'hsl(340 26% 58%)' },  // rose
+    { light: 'hsl(45 28% 44%)',  dark: 'hsl(45 28% 60%)' },   // gold
+    { light: 'hsl(280 26% 44%)', dark: 'hsl(280 26% 60%)' },  // violet
+  ];
+
+  if (index < curated.length) return curated[index];
+
+  // Fallback: golden angle with same muted saturation/lightness range.
+  const hue = (142 + (index - curated.length + 1) * 137.508) % 360;
   return {
-    light: `hsl(${hue} ${sat}% 52%)`,
-    dark: `hsl(${hue} ${sat}% 68%)`,
+    light: `hsl(${hue} 28% 40%)`,
+    dark: `hsl(${hue} 28% 56%)`,
   };
 }
 

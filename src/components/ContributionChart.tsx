@@ -39,7 +39,7 @@ export interface ContributionChartProps {
 }
 
 /** Colour for the nth series, wrapping the palette. */
-function seriesColor(index: number): { light: string; dark: string } {
+export function seriesColor(index: number): { light: string; dark: string } {
   const palette: Array<{ light: string; dark: string }> = [
     { light: 'hsl(142 64% 34%)', dark: 'hsl(142 44% 48%)' },
     { light: 'hsl(217 72% 45%)', dark: 'hsl(217 62% 60%)' },

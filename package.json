@@ -1,9 +1,10 @@
 {
   "name": "contribution-tracker-stats",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Wealthfolio addon: contribution statistics with month/day/year charts.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats.git"

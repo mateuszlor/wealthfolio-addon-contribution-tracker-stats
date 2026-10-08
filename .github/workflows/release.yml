@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # The archive name, the manifest inside it and the tag must agree, otherwise
+      # Wealthfolio installs the new tag over an older build.
+      - name: Check tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p "require('./manifest.json').version")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "Tag $tag does not match manifest version $manifest" >&2
+            echo "Run 'npm run version:bump' and commit before tagging." >&2
+            exit 1
+          fi
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build bundle
+        run: npm run build
+
+      - name: Validate manifest and bundle
+        run: npm run validate
+
+      # `npm run package` bumps the version, so a tagged build must not: the tag
+      # already fixes the version.
+      - name: Package release archive
+        run: npm run package:no-bump
+
+      - name: Upload addon package
+        uses: actions/upload-artifact@v4
+        with:
+          name: contribution-tracker-stats
+          path: release/*.zip
+          if-no-files-found: error
+
+      - name: Attach archive to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true

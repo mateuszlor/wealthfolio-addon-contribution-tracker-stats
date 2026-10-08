@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+release/
+*.tsbuildinfo
+*.tsbuildinfo.bak
+
+# Local package for the "Import from file" flow
+contribution-tracker-stats.zip
+
+# Tooling and environment noise
+.vite/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+# Normalise line endings in the repository, check them out as native.
+* text=auto
+
+# Lockfiles and scripts must not be rewritten by EOL conversion.
+package-lock.json -text
+*.mjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf

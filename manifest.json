@@ -1,0 +1,58 @@
+{
+  "id": "contribution-tracker-stats",
+  "name": "Contribution Tracker Stats",
+  "version": "1.0.20",
+  "description": "Contribution statistics card with month-by-month, day-by-day and year-by-year charts.",
+  "author": "Mateusz Lorencki",
+  "homepage": "https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats#readme",
+  "repository": "https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats",
+  "keywords": [
+    "contributions",
+    "deposits",
+    "statistics",
+    "chart"
+  ],
+  "icon": "chart-bar",
+  "sdkVersion": "3.9.0",
+  "minWealthfolioVersion": "3.7.0",
+  "main": "dist/addon.js",
+  "enabled": true,
+  "hostDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@wealthfolio/addon-sdk": "^3.9.0",
+    "@wealthfolio/ui": "^3.9.0",
+    "recharts": "^3.7.0"
+  },
+  "permissions": [
+    {
+      "category": "activities",
+      "purpose": "Reads deposit activities to calculate contribution statistics.",
+      "functions": [
+        {
+          "name": "getAll",
+          "isDeclared": true,
+          "isDetected": true
+        }
+      ]
+    }
+  ],
+  "contributes": {
+    "routes": [
+      {
+        "id": "contribution-stats"
+      }
+    ],
+    "links": {
+      "sidebar": [
+        {
+          "id": "contribution-stats",
+          "route": "contribution-stats",
+          "label": "Contribution Stats",
+          "icon": "chart-bar",
+          "order": 50
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "name": "contribution-tracker-stats",
+  "version": "1.0.20",
+  "private": true,
+  "type": "module",
+  "description": "Wealthfolio addon: contribution statistics with month/day/year charts.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats.git"
+  },
+  "homepage": "https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats#readme",
+  "bugs": {
+    "url": "https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats/issues"
+  },
+  "keywords": [
+    "wealthfolio",
+    "addon",
+    "contributions",
+    "deposits",
+    "statistics"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "test": "node scripts/test.mjs",
+    "version": "node scripts/version.mjs",
+    "version:check": "node scripts/version.mjs --check",
+    "version:bump": "node scripts/version.mjs patch",
+    "version:bump:minor": "node scripts/version.mjs minor",
+    "version:bump:major": "node scripts/version.mjs major",
+    "validate": "node scripts/validate.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run validate",
+    "package": "node scripts/build-release.mjs",
+    "package:no-bump": "node scripts/build-release.mjs --no-bump",
+    "package:minor": "node scripts/build-release.mjs --bump=minor",
+    "package:major": "node scripts/build-release.mjs --bump=major",
+    "release": "npm run clean && npm run verify && npm run package"
+  },
+  "dependencies": {
+    "@wealthfolio/addon-sdk": "^3.9.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@wealthfolio/ui": "^3.9.0",
+    "adm-zip": "^0.6.1",
+    "esbuild": "^0.21.5",
+    "recharts": "^3.7.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

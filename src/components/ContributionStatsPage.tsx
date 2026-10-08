@@ -2,11 +2,14 @@ import React from 'react';
 import { useAddonTranslation } from '@wealthfolio/addon-sdk';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 import {
+  Button,
   IntervalSelector,
+  Icons,
   Tabs,
   TabsList,
   TabsTrigger,
   getInitialIntervalData,
+  useBalancePrivacy,
   type TimePeriod,
 } from '@wealthfolio/ui';
 import { useContributions } from '../hooks/useContributions';
@@ -20,6 +23,14 @@ export interface ContributionStatsPageProps {
 
 const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
+/**
+ * Masks digits while preserving width and the currency symbol, so hiding amounts
+ * does not reflow the layout.
+ */
+function maskAmount(formatted: string): string {
+  return formatted.replace(/[\d\u00a0\u202f]/g, '•');
+}
+
 const STORAGE_KEY = 'contribution-tracker-stats.interval';
 
 const EMPTY_RANGE: CustomRange = { from: undefined, to: undefined };
@@ -28,6 +39,10 @@ type CustomRange = { from: Date | undefined; to: Date | undefined };
 
 export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
   const { t, language } = useAddonTranslation();
+
+  // Host-wide privacy state, shared with the rest of the app through
+  // localStorage, so the toggle stays in sync with the application's setting.
+  const { isBalanceHidden, toggleBalanceVisibility } = useBalancePrivacy();
 
   // The host language is canonical and regional aliases are already normalised,
   // so it is the single source for number and date formatting.
@@ -60,6 +75,23 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
         maximumFractionDigits: 1,
       }).format(value),
     [locale],
+  );
+
+  // The chart keeps its shape when amounts are hidden: only the digits are masked.
+  const displayValue = React.useCallback(
+    (value: number) => {
+      const formatted = formatCurrency(value);
+      return isBalanceHidden ? maskAmount(formatted) : formatted;
+    },
+    [formatCurrency, isBalanceHidden],
+  );
+
+  const displayTick = React.useCallback(
+    (value: number) => {
+      const formatted = formatTick(value);
+      return isBalanceHidden ? maskAmount(formatted) : formatted;
+    },
+    [formatTick, isBalanceHidden],
   );
 
   const formatDate = React.useCallback(
@@ -109,28 +141,44 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
             <p className="text-xs tracking-wide text-muted-foreground uppercase">
               {t('totalContributions')}
             </p>
-            <p className="tabular-nums text-3xl font-semibold">
-              {formatCurrency(stats.total)}
-            </p>
+            <p className="tabular-nums text-3xl font-semibold">{displayValue(stats.total)}</p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
           </div>
 
-          <dl className="flex gap-6 text-right">
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('contributionCount')}</dt>
-              <dd className="tabular-nums font-semibold">{stats.count}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">{t('averagePerDeposit')}</dt>
-              <dd className="tabular-nums font-semibold">{formatCurrency(stats.average)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('averageMonthly')}</dt>
-              <dd className="tabular-nums font-semibold">
-                {formatCurrency(stats.monthlyAverage)}
-              </dd>
-            </div>
-          </dl>
+          <div className="flex items-start gap-4">
+            <dl className="flex gap-6 text-right">
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('contributionCount')}</dt>
+                <dd className="tabular-nums font-semibold">{stats.count}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('averagePerDeposit')}</dt>
+                <dd className="tabular-nums font-semibold">{displayValue(stats.average)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('averageMonthly')}</dt>
+                <dd className="tabular-nums font-semibold">
+                  {displayValue(stats.monthlyAverage)}
+                </dd>
+              </div>
+            </dl>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={toggleBalanceVisibility}
+              aria-label={isBalanceHidden ? t('showAmounts') : t('hideAmounts')}
+              title={isBalanceHidden ? t('showAmounts') : t('hideAmounts')}
+            >
+              {isBalanceHidden ? (
+                <Icons.EyeOff className="h-4 w-4" />
+              ) : (
+                <Icons.Eye className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </header>
 
         {error && (
@@ -172,8 +220,8 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
             ) : (
               <ContributionChart
                 buckets={buckets}
-                formatValue={formatCurrency}
-                formatTick={formatTick}
+                formatValue={displayValue}
+                formatTick={displayTick}
               />
             )}
           </>

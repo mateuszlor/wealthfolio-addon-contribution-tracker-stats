@@ -38,19 +38,21 @@ export interface ContributionChartProps {
   hideAxis?: boolean;
 }
 
-/** Colour for the nth series, wrapping the palette. */
+/**
+ * Colour for the nth series using the golden angle (≈137.508°).
+ *
+ * The golden angle is an irrational fraction of 360°, so hues never repeat
+ * and each new colour lands in the largest gap on the colour wheel. This
+ * gives a pleasant, well-separated sequence for any number of accounts.
+ * Index 0 starts at 142° (green, the established contribution colour).
+ */
 export function seriesColor(index: number): { light: string; dark: string } {
-  const palette: Array<{ light: string; dark: string }> = [
-    { light: 'hsl(142 64% 34%)', dark: 'hsl(142 44% 48%)' },
-    { light: 'hsl(217 72% 45%)', dark: 'hsl(217 62% 60%)' },
-    { light: 'hsl(262 60% 48%)', dark: 'hsl(262 58% 66%)' },
-    { light: 'hsl(25 78% 46%)', dark: 'hsl(25 75% 58%)' },
-    { light: 'hsl(185 68% 36%)', dark: 'hsl(185 55% 48%)' },
-    { light: 'hsl(330 62% 48%)', dark: 'hsl(330 60% 66%)' },
-    { light: 'hsl(45 82% 42%)', dark: 'hsl(45 78% 56%)' },
-    { light: 'hsl(240 60% 52%)', dark: 'hsl(240 58% 68%)' },
-  ];
-  return palette[index % palette.length];
+  const hue = (142 + index * 137.508) % 360;
+  const sat = 65;
+  return {
+    light: `hsl(${hue} ${sat}% 42%)`,
+    dark: `hsl(${hue} ${sat}% 55%)`,
+  };
 }
 
 /**

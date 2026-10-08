@@ -69,32 +69,37 @@ meaningful.
 
 ## Versioning
 
-`manifest.json` holds the version and is the single source of truth: the host reads it
-and the release archive name is derived from it. `package.json` is rewritten to match,
-so npm tooling never disagrees.
+The **git tag is the source of truth** in CI. `manifest.json` holds the version locally
+and `package.json` is rewritten to match, so npm tooling never disagrees.
 
-**Every generated ZIP increments the version.** `npm run package` bumps patch by default,
-then stages, validates and archives, so the archive name, the manifest inside the archive
-and the version the host records always agree.
+Locally, every generated ZIP increments the version:
 
 | Command | Version effect |
 | --- | --- |
 | `npm run package` | `1.0.0` → `1.0.1` (patch) |
 | `npm run package:minor` | `1.0.1` → `1.1.0` |
 | `npm run package:major` | `1.0.1` → `2.0.0` |
-| `npm run package:no-bump` | keeps the current version (re-packs only) |
+| `npm run package:no-bump` | keeps the current version |
 | `npm run version` | prints the current version |
 | `npm run version:bump` | bumps patch without packaging |
+| `node scripts/version.mjs set <v>` | sets an explicit version |
 | `npm run version:check` | asserts manifest and package agree |
 
-Three independent guards keep the version honest:
+In CI nothing has to be mirrored by hand. `release.yml`:
 
-1. `validate.mjs` fails on a non-semver version or on drift between `manifest.json`
-   and `package.json`
-2. `build-release.mjs` bumps **before** staging, so the staged manifest already carries
-   the new version
-3. `assertArchiveMatchesVersion()` re-reads `manifest.json` from the built archive and
-   aborts the release if it disagrees with the archive name
+1. derives the version from the pushed tag (`v1.2.3` → `1.2.3`), or auto-increments on
+   manual dispatch via the `bump` choice
+2. writes it with `scripts/version.mjs set`, and commits the change as the bot
+3. tags a manual dispatch itself
+4. packages with `node scripts/build-release.mjs --version <v>`
+
+`--version` writes the version into the **staged** manifest only, so a tagged build never
+mutates the checkout. Both `--version 1.2.3` and `--version=1.2.3` work, and an invalid or
+missing value aborts the release instead of silently falling back to a bump.
+
+Guards: `validate.mjs` fails on a non-semver version or on drift between `manifest.json`
+and `package.json`; `assertArchiveMatchesVersion()` re-reads `manifest.json` from the built
+archive and aborts if it disagrees with the archive name.
 
 ### Range selection
 
@@ -230,12 +235,16 @@ the bundles.
 
 ### `release.yml` — `v*` tags and manual dispatch
 
-Same pipeline, then attaches the archive to the GitHub release with generated notes.
+The tag carries the version. On a tag push the workflow reads `1.2.3` from `v1.2.3`,
+writes it into `manifest.json` and `package.json`, commits that change as
+`github-actions[bot]`, then verifies, packages and attaches the archive to the release.
+Manual dispatch takes a `bump` choice (patch/minor/major), writes the version, tags the
+commit itself and publishes — so a release never depends on a human mirroring a number
+between two files.
 
-Two guards worth knowing about:
+`--version` only rewrites the **staged** manifest, so a tagged build never mutates the
+checkout, and both `--version 1.2.3` and `--version=1.2.3` are accepted. An invalid or
+missing value aborts the release instead of silently falling back to a bump.
 
-- **A tag must equal `manifest.json`'s version.** `npm run package` bumps the version on
-  every run, so a tagged build uses `package:no-bump`. Otherwise tagging `v1.0.9` after
-  a local `npm run package` would ship `v1.0.10`'s archive under the old name.
-- **Sourcemaps are excluded from release archives** (`build-release.mjs` removes
-  `addon.js.map`), and `self-check` fails if one sneaks in.
+Sourcemaps are excluded from release archives (`build-release.mjs` removes
+`addon.js.map`), and `self-check` in `ci.yml` fails if one sneaks in.

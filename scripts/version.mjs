@@ -85,6 +85,16 @@ export async function writeVersion(version, root = REPO_ROOT) {
   return version;
 }
 
+/**
+ * Sets an explicit version. The release workflow uses this so the tag is the
+ * single source of truth instead of a value a human has to mirror.
+ */
+export async function setVersion(version, root = REPO_ROOT) {
+  const previous = await currentVersion(root);
+  await writeVersion(version, root);
+  return { from: previous, to: version };
+}
+
 /** Bumps and persists; returns `{ from, to }`. */
 export async function bump(type = 'patch', root = REPO_ROOT) {
   const from = await currentVersion(root);
@@ -138,11 +148,19 @@ if (invokedDirectly) {
     for (const error of errors) console.error(`ERROR ${error}`);
     if (errors.length > 0) process.exit(1);
     console.log(current);
+  } else if (arg === 'set') {
+    const target = process.argv[3];
+    if (!target) {
+      console.error('Usage: node scripts/version.mjs set <version>');
+      process.exit(1);
+    }
+    const { from, to } = await setVersion(target);
+    console.log(`${from} -> ${to}`);
   } else if (BUMP_TYPES.includes(arg)) {
     const { from, to } = await bump(arg);
     console.log(`${from} -> ${to}`);
   } else {
-    console.error(`Unknown argument "${arg}". Use: --check | ${BUMP_TYPES.join(' | ')}`);
+    console.error(`Unknown argument "${arg}". Use: --check | set <version> | ${BUMP_TYPES.join(' | ')}`);
     process.exit(1);
   }
 }

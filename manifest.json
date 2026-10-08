@@ -1,7 +1,7 @@
 {
   "id": "contribution-tracker-stats",
   "name": "Contribution Tracker Stats",
-  "version": "1.0.20",
+  "version": "1.0.1",
   "description": "Contribution statistics card with month-by-month, day-by-day and year-by-year charts.",
   "author": "Mateusz Lorencki",
   "homepage": "https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats#readme",

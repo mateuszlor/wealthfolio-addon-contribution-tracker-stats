@@ -34,6 +34,23 @@ const STAGE = path.join(ROOT, 'build', 'package');
 const RELEASE = path.join(ROOT, 'release');
 const LEGACY_ZIP = path.join(ROOT, 'contribution-tracker-stats.zip');
 
+/** Accepts both `--version=1.2.3` and `--version 1.2.3`. */
+function parseVersionOption(argv) {
+  const equals = argv.find((arg) => arg.startsWith('--version='));
+  if (equals) return equals.slice('--version='.length);
+
+  const index = argv.indexOf('--version');
+  if (index !== -1) {
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error('--version requires a value, e.g. --version 1.2.3');
+    }
+    return value;
+  }
+
+  return undefined;
+}
+
 function parseBumpOption(argv) {
   if (argv.includes('--no-bump')) return { bumpType: null };
 
@@ -47,8 +64,25 @@ function parseBumpOption(argv) {
   return { bumpType: type };
 }
 
-/** Increments the version unless explicitly disabled. */
-async function bumpVersion(argv) {
+/**
+ * Resolves the release version.
+ *
+ * `--version=<v>` wins and is written into the staged manifest only, so CI can
+ * release the version carried by a git tag without rewriting the working tree.
+ * Otherwise the working manifest is bumped, which is the local workflow.
+ */
+async function resolveVersion(argv) {
+  const explicit = parseVersionOption(argv);
+
+  if (explicit) {
+    const normalised = explicit.replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+$/.test(normalised)) {
+      throw new Error(`Invalid --version value "${explicit}" (expected e.g. 1.2.3)`);
+    }
+    console.log(`Version ${normalised} (explicit)`);
+    return normalised;
+  }
+
   const { bumpType } = parseBumpOption(argv);
 
   if (!bumpType) {
@@ -75,7 +109,7 @@ function assertArchiveMatchesVersion(zip, version) {
   }
 }
 
-async function stage() {
+async function stage(version) {
   await rm(path.join(ROOT, 'build'), { recursive: true, force: true });
   await mkdir(STAGE, { recursive: true });
 
@@ -84,11 +118,18 @@ async function stage() {
   }
 
   await cp(path.join(ROOT, 'dist'), path.join(STAGE, 'dist'), { recursive: true });
-  await cp(path.join(ROOT, 'manifest.json'), path.join(STAGE, 'manifest.json'));
-  await cp(path.join(ROOT, 'README.md'), path.join(STAGE, 'README.md'));
 
-  const license = path.join(ROOT, 'LICENSE');
-  if (existsSync(license)) await cp(license, path.join(STAGE, 'LICENSE'));
+  // The staged manifest carries the release version even when the working tree was
+  // left untouched (`--version`), so the archive always matches the tag.
+  const manifest = JSON.parse(await readFile(path.join(ROOT, 'manifest.json'), 'utf8'));
+  manifest.version = version;
+  await writeFile(
+    path.join(STAGE, 'manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
+  );
+
+  await cp(path.join(ROOT, 'README.md'), path.join(STAGE, 'README.md'));
 
   // Ship the sourcemap only outside release archives.
   const dist = path.join(STAGE, 'dist');
@@ -106,9 +147,9 @@ function archive() {
 }
 
 async function main() {
-  const version = await bumpVersion(process.argv.slice(2));
+  const version = await resolveVersion(process.argv.slice(2));
 
-  await stage();
+  await stage(version);
 
   // Validate the exact payload that will be archived, not the working tree.
   const ok = await validate({ root: STAGE });

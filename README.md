@@ -89,9 +89,7 @@ In CI nothing has to be mirrored by hand. `release.yml`:
 
 1. derives the version from the pushed tag (`v1.2.3` → `1.2.3`), or auto-increments on
    manual dispatch via the `bump` choice
-2. writes it with `scripts/version.mjs set`, and commits the change as the bot
-3. tags a manual dispatch itself
-4. packages with `node scripts/build-release.mjs --version <v>`
+2. packages with `node scripts/build-release.mjs --version <v>`
 
 `--version` writes the version into the **staged** manifest only, so a tagged build never
 mutates the checkout. Both `--version 1.2.3` and `--version=1.2.3` work, and an invalid or
@@ -235,16 +233,18 @@ the bundles.
 
 ### `release.yml` — `v*` tags and manual dispatch
 
-The tag carries the version. On a tag push the workflow reads `1.2.3` from `v1.2.3`,
-writes it into `manifest.json` and `package.json`, commits that change as
-`github-actions[bot]`, then verifies, packages and attaches the archive to the release.
-Manual dispatch takes a `bump` choice (patch/minor/major), writes the version, tags the
-commit itself and publishes — so a release never depends on a human mirroring a number
-between two files.
+The tag carries the version. A tag push publishes exactly that version; manual dispatch
+takes a `bump` choice (patch/minor/major) and uses the incremented result. The workflow
+performs **no git writes** — no commits, no tag pushes — so there is nothing to keep in
+sync and no risk of a release trying to move an existing tag. On manual dispatch
+GitHub creates the tag as part of the release.
 
 `--version` only rewrites the **staged** manifest, so a tagged build never mutates the
 checkout, and both `--version 1.2.3` and `--version=1.2.3` are accepted. An invalid or
 missing value aborts the release instead of silently falling back to a bump.
+
+`manifest.json` therefore keeps whatever version the last local `npm run package` wrote;
+the released version lives in the tag and in the packaged archive.
 
 Sourcemaps are excluded from release archives (`build-release.mjs` removes
 `addon.js.map`), and `self-check` in `ci.yml` fails if one sneaks in.

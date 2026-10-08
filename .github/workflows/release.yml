@@ -1,8 +1,8 @@
 name: release
 
-# The git tag is the single source of truth for the version. This workflow never
-# asks a human to mirror it into manifest.json: it derives the version from the
-# tag (or auto-increments on manual dispatch), writes it, commits it, and packages.
+# The release version comes from the git tag, so nothing has to be mirrored by hand.
+# This workflow performs no git writes: it resolves the version, verifies, packages
+# and lets GitHub create the release (and the tag, on manual dispatch).
 on:
   push:
     tags: ['v*']
@@ -23,8 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -34,43 +32,20 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      # A tag push publishes exactly that version. A manual run increments the
+      # version in the checkout and uses the result.
       - name: Resolve release version
         id: version
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
             version="${GITHUB_REF_NAME#v}"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
           else
-            current="$(node -p "require('./manifest.json').version")"
-            type="${{ inputs.bump }}"
-            version="$(node "scripts/version.mjs" "$type" >/dev/null; node -p "require('./manifest.json').version")"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
+            node scripts/version.mjs "${{ inputs.bump }}"
+            version="$(node -p "require('./manifest.json').version")"
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing $version"
-
-      - name: Sync version into manifest
-        run: node scripts/version.mjs set "${{ steps.version.outputs.version }}"
-
-      - name: Commit version bump
-        run: |
-          if git diff --quiet; then
-            echo "Version already in sync."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add manifest.json package.json
-            git commit -m "chore: release ${{ steps.version.outputs.version }}"
-            git push origin HEAD:${{ github.ref_name == '' && 'main' || github.ref_name }}
-          fi
-
-      - name: Tag manual release
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
 
       - name: Type check
         run: npm run typecheck
@@ -84,8 +59,8 @@ jobs:
       - name: Validate manifest and bundle
         run: npm run validate
 
-      # `npm run package` bumps the working tree, so a tagged build passes the
-      # version explicitly and leaves the repository untouched.
+      # `--version` writes the version into the staged manifest only, so the
+      # checkout stays untouched and the archive always matches the tag.
       - name: Package release archive
         run: node scripts/build-release.mjs --version "${{ steps.version.outputs.version }}"
 

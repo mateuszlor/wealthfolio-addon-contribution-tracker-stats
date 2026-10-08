@@ -47,10 +47,15 @@ spacing always reflects time.
 
 ### Privacy
 
-The eye button in the top-right corner hides the amounts. It uses Wealthfolio's own
-privacy setting, so it stays in sync with the rest of the app. Hiding masks the digits in
-the summary, the axis and the tooltip — the bars themselves stay, so you can still see the
-*shape* of your contributions without revealing the numbers.
+The eye button in the top-right corner hides the amounts: every amount in the summary and
+in the tooltip turns into a fixed `••••`, and the value axis disappears. The bars stay, so
+you can still read the *shape* of your contributions without seeing a single number — not
+even the order of magnitude, which a partially masked value would still give away.
+
+The choice is remembered for this add-on, so it survives a reload, and it is removed
+together with the add-on. It is deliberately **not** Wealthfolio's own privacy toggle:
+add-ons run in a sandboxed frame where the browser storage that setting is kept in is
+unavailable, so the two cannot be shared.
 
 ## Requirements
 
@@ -84,8 +89,8 @@ browser console and look for the addon's diagnostic line:
 It reports how many rows the host returned, which types they had, and how many deposits
 were dropped and why.
 
-**Amounts are hidden.** Someone turned on privacy mode, or the eye button was pressed.
-The state is shared across Wealthfolio, so check the application's own privacy setting.
+**Amounts are hidden.** Press the eye button in the top-right corner to show them again.
+The choice is remembered for this add-on, so it also survives a reload of the page.
 
 ## Privacy and data
 

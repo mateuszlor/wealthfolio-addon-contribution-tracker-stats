@@ -35,6 +35,7 @@ a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
 | `npm run clean` | Removes `dist`, `build`, `release`, local zip |
 | `npm run version` | Prints the current version |
 | `npm run version:check` | Asserts manifest and package versions agree |
+| `npm run version:bump` / `:minor` / `:major` | Bumps the version without packaging |
 
 ## Layout
 
@@ -48,10 +49,12 @@ src/
 │   ├── ContributionChart.tsx          ChartContainer + BarChart
 │   └── CustomRangeButton.tsx          ghost button + Popover + DatePickerWithRange
 ├── hooks/
-│   └── useContributions.ts            host bridge: activities -> records
+│   ├── useContributions.ts            host bridge: activities -> records
+│   └── useHiddenAmounts.ts            privacy flag in ctx.api.storage (sandbox-safe)
 └── lib/
     ├── intake.ts                      raw activities -> contribution records (pure)
-    └── contributions.ts               bucketing, gap filling, summaries (pure)
+    ├── contributions.ts               bucketing, gap filling, summaries (pure)
+    └── privacy.ts                     the host's amount mask, for tooltip strings (pure)
 
 scripts/
 ├── test.mjs                unit tests (esbuild transpiles the TS on the fly)
@@ -61,8 +64,8 @@ scripts/
 └── clean.mjs               remove build output
 ```
 
-The two `lib/` modules are deliberately free of React and of the SDK, which is what makes
-them testable.
+The three `lib/` modules are deliberately free of React and of the SDK, which is what makes
+them testable. The hooks are the only place that touches `ctx.api`.
 
 ## Host API rules worth knowing
 
@@ -110,6 +113,34 @@ shapes are accepted in `src/lib/intake.ts` and covered by a regression test.
 `useAddonTranslation().language`, which normalises regional aliases, so reading settings
 for it would request access for nothing.
 
+**The sandbox has no `localStorage`, and no `useBalancePrivacy`.** The add-on runs in an
+iframe created with `sandbox="allow-scripts"` (no `allow-same-origin`) from `srcdoc`, so it
+has an **opaque origin**: `localStorage.getItem` throws and `localStorage.setItem` throws a
+`SecurityError` on every write, which the host classifies into its *"this add-on uses browser
+storage"* toast. Persist anything through `ctx.api.storage` instead — it is a baseline
+category, so it needs no `manifest.permissions` entry. The same opaque origin owns its
+storage area, so `storage` events and `window.dispatchEvent` never cross the frame: there is
+no way to observe the host's own state from in here.
+
+Consequently the built-in privacy helpers are unusable:
+
+| Helper | Why |
+| --- | --- |
+| `useBalancePrivacy()` | reads and writes `localStorage`; read fails silently (always `false`), write throws |
+| `PrivacyAmount` | calls `useBalancePrivacy()` internally, so it tracks the app setting, which this addon cannot see |
+| `usePersistentState(key, …)` | `window.localStorage` under the hood — reads fail, writes are dropped |
+
+What does work is **`AmountDisplay`**, which takes `isHidden` as a prop instead of reading
+global state, and the built-in formatters `useAmountFormatting()` / `useDateFormatting()` /
+`FormattingProvider`. The page renders them rather than hand-rolling `Intl`, so separators,
+fraction digits and the `••••` mask are the host's. The mask lives in `src/lib/privacy.ts`
+only because the chart tooltip is a formatter that must return a string, not a component.
+
+Masking must be a **fixed** string. Replacing just the digits left the group separators and
+the compact suffix readable, so a hidden total still said "hundreds of thousands" and the
+Y-axis printed `••• mln` — which is why the axis is hidden outright (`hideAxis`) instead of
+masked. `npm test` guards the mask against becoming value-dependent again.
+
 **Externalise exactly what the host provides.** `vite.config.ts` lists the externals:
 `react`, `react-dom`, `@wealthfolio/addon-sdk`, `@wealthfolio/ui`,
 `@wealthfolio/ui/chart` and `recharts`. Bundling `react` would break hooks, because the
@@ -138,6 +169,68 @@ trigger. Combined with `IntervalSelector` that produces two rows of pills, and b
 every preset is hidden the trigger can never match one, so it always renders in the
 filled "custom range" variant. `CustomRangeButton` composes the same host primitives
 instead.
+
+## Manifest shape
+
+```jsonc
+{
+  "id": "contribution-tracker-stats",
+  "name": "Contribution Tracker Stats",
+  "version": "1.0.1",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.9.0",
+  "minWealthfolioVersion": "3.7.0",
+  "icon": "chart-bar",
+  "hostDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@wealthfolio/addon-sdk": "^3.9.0",
+    "@wealthfolio/ui": "^3.9.0",
+    "recharts": "^3.7.0"
+  },
+  "permissions": [
+    {
+      "category": "activities",
+      "purpose": "Reads deposit activities to calculate contribution statistics.",
+      "functions": [{ "name": "getAll", "isDeclared": true, "isDetected": true }]
+    }
+  ],
+  "contributes": {
+    "routes": [{ "id": "contribution-stats" }],
+    "links": {
+      "sidebar": [{ "route": "contribution-stats", "label": "Contribution Stats", "icon": "chart-bar", "order": 50 }]
+    }
+  }
+}
+```
+
+`storage` is deliberately absent from `permissions`: it is a baseline category.
+
+Runtime wiring that matches it (mirrors the documented reference addon):
+
+```ts
+ctx.router.add({
+  id: 'contribution-stats',                     // === contributes.routes[0].id
+  path: '/addons/contribution-tracker-stats',  // === /addons/<manifest.id>
+  component: Route,
+});
+```
+
+Field-level pitfalls are listed under [Host API rules](#host-api-rules-worth-knowing) above
+and enforced by `scripts/validate.mjs`.
+
+## i18n
+
+Translations are registered with `registerTranslations()` inside `enable()` (`src/addon.tsx`)
+and read with `useAddonTranslation()`, which also hands out the canonical `language`.
+`src/i18n.ts` ships `en` — the host falls back to it for any missing language — and `pl`.
+
+Code, comments and identifiers stay English; every user-facing string comes from a bundle.
+New keys go into **both** bundles, otherwise one locale renders the raw key.
+
+Formatting is *not* an i18n concern here: numbers, currencies and dates come from the host
+(`FormattingProvider`, `AmountDisplay`, `useAmountFormatting()`, `useDateFormatting()`), so
+they follow the application's formatting region rather than the interface language.
 
 ## Validation
 
@@ -232,6 +325,11 @@ concentrated on the parts that fail silently:
   separators, negative amounts, unparseable dates, non-array payloads
 - bucketing by month/day/year, chronological ordering
 - interval windows and gap filling, including the bucket ceiling
+- the privacy mask: fixed width, no digits, separators or unit suffix, identical for every
+  locale and every magnitude
 - semver bumping
 
-UI behaviour is verified by importing the package into Wealthfolio.
+UI behaviour is verified by importing the package into Wealthfolio. That includes the one
+thing CI cannot check at all — the sandbox itself: press the eye button, reload the route
+(the mask must still be there, and no *"add-on uses browser storage"* toast may appear),
+then uninstall and confirm the flag is gone.

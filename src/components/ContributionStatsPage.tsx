@@ -2,20 +2,25 @@ import React from 'react';
 import { useAddonTranslation } from '@wealthfolio/addon-sdk';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 import {
+  AmountDisplay,
   Button,
+  FormattingProvider,
   IntervalSelector,
   Icons,
   Tabs,
   TabsList,
   TabsTrigger,
   getInitialIntervalData,
-  useBalancePrivacy,
+  useAmountFormatting,
+  useDateFormatting,
   type TimePeriod,
 } from '@wealthfolio/ui';
 import { useContributions } from '../hooks/useContributions';
+import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { ContributionChart } from './ContributionChart';
 import { CustomRangeButton } from './CustomRangeButton';
 import { bucketize, fillGaps, filterByRange, summarize, type Granularity } from '../lib/contributions';
+import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
   ctx: AddonContext;
@@ -23,29 +28,39 @@ export interface ContributionStatsPageProps {
 
 const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
-/**
- * Masks digits while preserving width and the currency symbol, so hiding amounts
- * does not reflow the layout.
- */
-function maskAmount(formatted: string): string {
-  return formatted.replace(/[\d\u00a0\u202f]/g, '•');
-}
-
 const STORAGE_KEY = 'contribution-tracker-stats.interval';
 
 const EMPTY_RANGE: CustomRange = { from: undefined, to: undefined };
 
 type CustomRange = { from: Date | undefined; to: Date | undefined };
 
+/**
+ * Number, currency and date formatting is the host's, not the addon's: the built-in
+ * `FormattingProvider` feeds `useAmountFormatting()` / `useDateFormatting()` /
+ * `AmountDisplay`, so separators, fraction digits and the mask are exactly the ones
+ * the application uses. The provider has to sit *above* the component that reads
+ * those hooks, hence the split.
+ */
 export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
+  const { language } = useAddonTranslation();
+
+  return (
+    <FormattingProvider locale={language || 'en'} uiLocale={language || 'en'}>
+      <ContributionStatsPageContent ctx={ctx} />
+    </FormattingProvider>
+  );
+}
+
+function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const { t, language } = useAddonTranslation();
 
-  // Host-wide privacy state, shared with the rest of the app through
-  // localStorage, so the toggle stays in sync with the application's setting.
-  const { isBalanceHidden, toggleBalanceVisibility } = useBalancePrivacy();
+  // Add-on-local privacy state, persisted in the host storage bridge. Wealthfolio's
+  // own setting lives in `localStorage`, which throws in the opaque-origin sandbox,
+  // and the host has no privacy bridge for add-ons yet.
+  const { hidden: amountsHidden, toggle: toggleAmountsHidden } = useHiddenAmounts(ctx);
 
-  // The host language is canonical and regional aliases are already normalised,
-  // so it is the single source for number and date formatting.
+  // `locale` only labels the buckets now; amounts and dates come from the host
+  // formatters above. Regional aliases are already normalised by the SDK.
   const locale = language || 'en';
   const { loading, error, records, granularity, setGranularity } = useContributions(ctx, locale);
 
@@ -57,51 +72,31 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
 
   const currency = 'PLN';
 
-  const formatCurrency = React.useCallback(
-    (value: number) =>
-      new Intl.NumberFormat(locale, {
-        style: 'currency',
-        currency,
-        maximumFractionDigits: 0,
-      }).format(value),
-    [locale],
-  );
-
-  // Axis ticks stay short; repeating the currency on every gridline is noise.
-  const formatTick = React.useCallback(
-    (value: number) =>
-      new Intl.NumberFormat(locale, {
-        notation: 'compact',
-        maximumFractionDigits: 1,
-      }).format(value),
-    [locale],
-  );
-
-  // The chart keeps its shape when amounts are hidden: only the digits are masked.
-  const displayValue = React.useCallback(
-    (value: number) => {
-      const formatted = formatCurrency(value);
-      return isBalanceHidden ? maskAmount(formatted) : formatted;
-    },
-    [formatCurrency, isBalanceHidden],
-  );
-
-  const displayTick = React.useCallback(
-    (value: number) => {
-      const formatted = formatTick(value);
-      return isBalanceHidden ? maskAmount(formatted) : formatted;
-    },
-    [formatTick, isBalanceHidden],
-  );
+  // The host formatters replace hand-rolled `Intl` calls: currency-aware fraction
+  // digits, the application's own separators and the `formatCompactAmount` shape
+  // the spending reports use on their axes.
+  const { formatAmount, formatCompactAmount } = useAmountFormatting();
+  const { formatDate: formatHostDate } = useDateFormatting();
 
   const formatDate = React.useCallback(
     (value: Date | undefined) =>
       value
-        ? new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric' }).format(
-            value,
-          )
+        ? formatHostDate(value, { day: '2-digit', month: 'short', year: 'numeric' })
         : undefined,
-    [locale],
+    [formatHostDate],
+  );
+
+  // Axis ticks stay short; repeating the currency on every gridline is noise.
+  const formatTick = React.useCallback(
+    (value: number) => formatCompactAmount(value, currency, false),
+    [formatCompactAmount, currency],
+  );
+
+  // The tooltip is a string, so `AmountDisplay` cannot render it; the mask is the
+  // host's own, applied to the value the host formatter produced.
+  const displayValue = React.useCallback(
+    (value: number) => maskAmount(formatAmount(value, currency), amountsHidden),
+    [formatAmount, currency, amountsHidden],
   );
 
   // The interval selector and the calendar share one window; a custom range wins
@@ -141,7 +136,11 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
             <p className="text-xs tracking-wide text-muted-foreground uppercase">
               {t('totalContributions')}
             </p>
-            <p className="tabular-nums text-3xl font-semibold">{displayValue(stats.total)}</p>
+            {/* The host mask is shorter than a real total, so the slot keeps a
+                minimum width and toggling does not shift the block. */}
+            <p className="tabular-nums min-w-[9ch] text-3xl font-semibold">
+              <AmountDisplay value={stats.total} currency={currency} isHidden={amountsHidden} />
+            </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
           </div>
 
@@ -153,12 +152,18 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">{t('averagePerDeposit')}</dt>
-                <dd className="tabular-nums font-semibold">{displayValue(stats.average)}</dd>
+                <dd className="tabular-nums font-semibold">
+                  <AmountDisplay value={stats.average} currency={currency} isHidden={amountsHidden} />
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">{t('averageMonthly')}</dt>
                 <dd className="tabular-nums font-semibold">
-                  {displayValue(stats.monthlyAverage)}
+                  <AmountDisplay
+                    value={stats.monthlyAverage}
+                    currency={currency}
+                    isHidden={amountsHidden}
+                  />
                 </dd>
               </div>
             </dl>
@@ -168,14 +173,17 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
               variant="ghost"
               size="icon"
               className="shrink-0"
-              onClick={toggleBalanceVisibility}
-              aria-label={isBalanceHidden ? t('showAmounts') : t('hideAmounts')}
-              title={isBalanceHidden ? t('showAmounts') : t('hideAmounts')}
+              onClick={toggleAmountsHidden}
+              aria-pressed={amountsHidden}
+              aria-label={amountsHidden ? t('showAmounts') : t('hideAmounts')}
+              title={amountsHidden ? t('showAmounts') : t('hideAmounts')}
             >
-              {isBalanceHidden ? (
-                <Icons.EyeOff className="h-4 w-4" />
-              ) : (
+              {/* The icon states the action, like the host's own privacy toggle:
+                  clicking the eye while hidden brings the amounts back. */}
+              {amountsHidden ? (
                 <Icons.Eye className="h-4 w-4" />
+              ) : (
+                <Icons.EyeOff className="h-4 w-4" />
               )}
             </Button>
           </div>
@@ -221,7 +229,8 @@ export function ContributionStatsPage({ ctx }: ContributionStatsPageProps) {
               <ContributionChart
                 buckets={buckets}
                 formatValue={displayValue}
-                formatTick={displayTick}
+                formatTick={formatTick}
+                hideAxis={amountsHidden}
               />
             )}
           </>

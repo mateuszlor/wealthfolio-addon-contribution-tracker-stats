@@ -32,13 +32,24 @@ export interface ContributionChartProps {
   formatValue: (value: number) => string;
   /** Compact axis ticks; the currency belongs in the tooltip, not on every tick. */
   formatTick: (value: number) => string;
+  /**
+   * Hides the value axis while amounts are masked. A masked tick would still
+   * spell out its unit (`••• mln`), so the axis goes away instead of being
+   * masked — the same choice the host's net-worth chart makes.
+   */
+  hideAxis?: boolean;
 }
 
 /**
  * Native Wealthfolio chart: the same `ChartContainer` / `ChartTooltipContent`
  * primitives the spending reports use, so colours follow the host theme.
  */
-export function ContributionChart({ buckets, formatValue, formatTick }: ContributionChartProps) {
+export function ContributionChart({
+  buckets,
+  formatValue,
+  formatTick,
+  hideAxis = false,
+}: ContributionChartProps) {
   if (buckets.length === 0) return null;
 
   return (
@@ -53,6 +64,7 @@ export function ContributionChart({ buckets, formatValue, formatTick }: Contribu
           minTickGap={16}
         />
         <YAxis
+          hide={hideAxis}
           tickLine={false}
           axisLine={false}
           tickMargin={4}

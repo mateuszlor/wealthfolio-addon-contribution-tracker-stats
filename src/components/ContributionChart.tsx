@@ -45,13 +45,16 @@ export interface ContributionChartProps {
  * and each new colour lands in the largest gap on the colour wheel. This
  * gives a pleasant, well-separated sequence for any number of accounts.
  * Index 0 starts at 142° (green, the established contribution colour).
+ *
+ * Pastel tones: low saturation (35%), higher lightness for a calm, readable
+ * chart that works in both light and dark mode without vibrating.
  */
 export function seriesColor(index: number): { light: string; dark: string } {
   const hue = (142 + index * 137.508) % 360;
-  const sat = 65;
+  const sat = 35;
   return {
-    light: `hsl(${hue} ${sat}% 42%)`,
-    dark: `hsl(${hue} ${sat}% 55%)`,
+    light: `hsl(${hue} ${sat}% 52%)`,
+    dark: `hsl(${hue} ${sat}% 68%)`,
   };
 }
 

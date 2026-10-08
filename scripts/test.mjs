@@ -222,6 +222,41 @@ test('summarising nothing yields zeros', () => {
   assert.deepEqual(summary, { total: 0, count: 0, average: 0, monthlyAverage: 0 });
 });
 
+/* ---------------------------------------------------------------- privacy */
+
+const { mod: privacy, cleanup: cleanupPrivacy } = await loadTs('src/lib/privacy.ts');
+
+test('shows the formatted amount untouched while amounts are visible', () => {
+  assert.equal(privacy.maskAmount('PLN 12 345', false), 'PLN 12 345');
+  assert.equal(privacy.maskAmount('1,2 mln', false), '1,2 mln');
+});
+
+test('a hidden amount is the fixed mask in every locale', () => {
+  // Regression: masking only the digits left the group separators and the compact
+  // suffix intact, so a hidden total still read as "hundreds of thousands".
+  for (const formatted of ['PLN 12,345', 'PLN 1,234,567', '1.2K', '1,2 mln', '0']) {
+    assert.equal(privacy.maskAmount(formatted, true), privacy.HIDDEN_AMOUNT);
+  }
+});
+
+test('the mask cannot give away the order of magnitude', () => {
+  // The failure mode this guards: a mask built from the input leaks its length,
+  // its separators and its unit suffix.
+  const small = privacy.maskAmount('PLN 1 200', true);
+  const large = privacy.maskAmount('PLN 1 234 567 890', true);
+
+  assert.equal(small, large, 'the mask must not depend on the value');
+  assert.equal(small.length, large.length, 'the mask must have a fixed width');
+  assert.ok(!/[\d.,]/.test(small), 'the mask must not contain digits or separators');
+  assert.ok(!/k|m|tys|mln|mld|bn/i.test(small), 'the mask must not contain a unit suffix');
+});
+
+test('the mask is the one the host renders', () => {
+  // `AmountDisplay` / `PrivacyAmount` render four U+2022, so the tooltip cannot
+  // look different from the summary.
+  assert.equal(privacy.HIDDEN_AMOUNT, '\u2022\u2022\u2022\u2022');
+});
+
 /* -------------------------------------------------------------- version.mjs */
 
 const version = await import(pathToFileURL(path.join(ROOT, 'scripts', 'version.mjs')).href);
@@ -388,6 +423,7 @@ for (const { name, fn } of tests) {
 
 await cleanupIntake();
 await cleanupContributions();
+await cleanupPrivacy();
 
 console.log(`\n${tests.length - failed}/${tests.length} passed`);
 process.exit(failed === 0 ? 0 : 1);

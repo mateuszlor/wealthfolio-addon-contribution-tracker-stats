@@ -130,6 +130,11 @@ async function stage(version) {
   );
 
   await cp(path.join(ROOT, 'README.md'), path.join(STAGE, 'README.md'));
+  await cp(path.join(ROOT, 'DEVELOPING.md'), path.join(STAGE, 'DEVELOPING.md'));
+
+  // The MIT license is part of the package, not an optional extra: an addon
+  // published without it gives users no legal right to use it.
+  await cp(path.join(ROOT, 'LICENSE'), path.join(STAGE, 'LICENSE'));
 
   // Ship the sourcemap only outside release archives.
   const dist = path.join(STAGE, 'dist');

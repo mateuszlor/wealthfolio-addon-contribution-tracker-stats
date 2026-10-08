@@ -1,250 +1,99 @@
-# Contribution Tracker Stats
+# Contribution Stats
 
-Wealthfolio addon that shows a card with contribution (deposit) statistics, aggregated
-**month by month**, **day by day** and **year by year**.
+A chart of your deposits inside [Wealthfolio](https://wealthfolio.app), broken down
+**month by month, day by day and year by year**.
 
-The addon uses the host's own chart and layout primitives (`ChartContainer`,
-`ChartTooltipContent`, `BarChart`, `Card`, `Tabs`) so it renders with the application's
-theme instead of a hand-rolled look.
+Requires Wealthfolio 3.7+. English and Polish interface.
 
-**No CSS is shipped** (`dist/` contains only `addon.js`). Two hard-won rules:
+---
 
-1. Do not copy `@wealthfolio/ui/styles.css` into the package — it is a Tailwind v4 *source*
-   file (`@import "tailwindcss"`, `@theme`, `@apply`) and the host rejects it with
-   *"Addon CSS @import rules are not supported; bundle or package the CSS file"*.
-   `validate.mjs` fails the build on `@import` or an uncompiled Tailwind directive in
-   packaged CSS.
-2. Do not route chart colours through `var(--chart-1)`. `ChartStyle` expands the config
-   into `--color-<key>`, so a token-based colour leaves `fill` unresolved and the bars
-   render black. `ChartConfig.theme` emits concrete colours per mode instead:
+## What is Wealthfolio?
 
-   ```ts
-   theme: { light: 'hsl(142 64% 34%)', dark: 'hsl(142 44% 48%)' }
-   ```
+Wealthfolio is a free, open-source app for tracking your investments, net worth and
+spending. It runs on your own machine, keeps your financial data local, and supports
+Windows, macOS, Linux, iOS and Android.
 
-Named imports from host packages are verified by **`npm run typecheck`**, not by a
-hand-written parser: TypeScript resolves `export *` chains, `exports` maps and subpaths
-exactly, and reports invented names (`Stack`, `Typography`, `Stat`) as `TS2305`.
-`validate.mjs` only asserts the host packages are installed so that check stays
-meaningful.
+Find it at [wealthfolio.app](https://wealthfolio.app).
+
+## What this addon does
+
+Wealthfolio records every movement of money as an *activity*. The ones that add money to
+your accounts are **deposits** — a transfer from your salary, a BLIK payment, a standing
+order. By default the app shows you totals, but not *how* your deposits are spread over
+time.
+
+This addon answers that question:
+
+- **Total contributed** over the selected period
+- **Contribution count** — how many deposits there were
+- **Average per deposit** — the mean size of a single deposit
+- **Average per month** — the mean monthly pace across the selected range
+- **A bar chart** you can regroup by month, day or year
+
+Two figures that look similar but are not: *average per deposit* divides the sum by the
+number of deposits, while *average per month* divides it by the number of months in the
+range. With irregular deposits they can differ several-fold.
+
+### Selecting a period
+
+The row of pills uses the same period selector as Wealthfolio's own reports — last month,
+3M, 6M, YTD, 1Y and so on. The calendar button next to it lets you set any custom range,
+for example March 2019 → July 2022.
+
+The **Month / Day / Year** tabs below decide how the chart groups the money inside that
+period. They combine: *1Y + Month* gives twelve monthly bars, *1M + Day* gives one bar per
+day of the current month. Periods without deposits are drawn as empty slots, so the
+spacing always reflects time.
+
+### Privacy
+
+The eye button in the top-right corner hides the amounts. It uses Wealthfolio's own
+privacy setting, so it stays in sync with the rest of the app. Hiding masks the digits in
+the summary, the axis and the tooltip — the bars themselves stay, so you can still see the
+*shape* of your contributions without revealing the numbers.
 
 ## Requirements
 
-- Node.js >= 20
-- Wealthfolio >= 3.7.0
+- Wealthfolio 3.7.0 or newer
 
-## Scripts
+## Installation
 
-| Command | Purpose |
-| --- | --- |
-| `npm run typecheck` | `tsc --noEmit` over `src` |
-| `npm test` | Regression tests for intake/aggregation and version helpers |
-| `npm run build` | Vite library build to `dist/addon.js` (ES module) |
-| `npm run validate` | Validates manifest + bundle + package layout |
-| `npm run verify` | `typecheck` → `test` → `build` → `validate` |
-| `npm run package` | Bumps version, stages, validates and zips the archive |
-| `npm run release` | `clean` → `verify` → `package` |
-| `npm run clean` | Removes `dist`, `build`, `release`, local zip |
+1. Download the archive from the
+   [releases page](https://github.com/mateuszlor/wealthfolio-addon-contribution-tracker-stats/releases)
+   (`contribution-tracker-stats-<version>.zip`).
+2. In Wealthfolio open **Settings → Add-ons → Import from file**.
+3. Pick the downloaded `.zip`. A **Contribution Stats** entry appears in the sidebar.
+4. Click it. The first load reads your activity history; large portfolios take a moment.
 
-## Validation
+## Uninstall
 
-`scripts/validate.mjs` is the source of truth and runs the host's own
-`validateManifest()` from `@wealthfolio/addon-sdk`, plus structural checks:
+**Settings → Add-ons → Contribution Stats → Remove.** The addon only reads your data and
+never writes to it, so removing it leaves no trace in your portfolio.
 
-- `manifest.main` exists and is non-empty
-- every `permissions[].functions[].name` belongs to its declared category
-- `contributes.routes` ids are relative and `contributes.links.*.route` references them
-- sidebar icons are kebab-case names from `ADDON_ICON_NAMES`
-- the bundle imports only declared `hostDependencies` (a declared package covers its own
-  subpaths, so `@wealthfolio/ui` also covers `@wealthfolio/ui/chart`)
-- the bundle contains **no** `react/jsx-runtime` or `react-dom/client` imports
-- the bundle contains **no** `process.env` reference (the sandbox has no `process`)
-- the host packages are installed, so `npm run typecheck` can verify import names
-- every `ctx.api.<category>` reference in `src/**` is declared in
-  `manifest.permissions`, so the host cannot reject it at runtime with
-  *"tried to use '<fn>' without permission"*. Sources are scanned with comments
-  stripped; baseline categories (`ui`, `query`, `toast`, `logger`, `storage`) are
-  exempt. Undeclared and declared-but-unused permissions are both reported
-- the archive has `manifest.json` at its root and no `node_modules`
+## Troubleshooting
 
-## Versioning
-
-The **git tag is the source of truth** in CI. `manifest.json` holds the version locally
-and `package.json` is rewritten to match, so npm tooling never disagrees.
-
-Locally, every generated ZIP increments the version:
-
-| Command | Version effect |
-| --- | --- |
-| `npm run package` | `1.0.0` → `1.0.1` (patch) |
-| `npm run package:minor` | `1.0.1` → `1.1.0` |
-| `npm run package:major` | `1.0.1` → `2.0.0` |
-| `npm run package:no-bump` | keeps the current version |
-| `npm run version` | prints the current version |
-| `npm run version:bump` | bumps patch without packaging |
-| `node scripts/version.mjs set <v>` | sets an explicit version |
-| `npm run version:check` | asserts manifest and package agree |
-
-In CI nothing has to be mirrored by hand. `release.yml`:
-
-1. derives the version from the pushed tag (`v1.2.3` → `1.2.3`), or auto-increments on
-   manual dispatch via the `bump` choice
-2. packages with `node scripts/build-release.mjs --version <v>`
-
-`--version` writes the version into the **staged** manifest only, so a tagged build never
-mutates the checkout. Both `--version 1.2.3` and `--version=1.2.3` work, and an invalid or
-missing value aborts the release instead of silently falling back to a bump.
-
-Guards: `validate.mjs` fails on a non-semver version or on drift between `manifest.json`
-and `package.json`; `assertArchiveMatchesVersion()` re-reads `manifest.json` from the built
-archive and aborts if it disagrees with the archive name.
-
-### Range selection
-
-`IntervalSelector` provides the preset pills. The custom calendar button is **not**
-`DateRangeSelector`: that component renders its own preset pills *and* a trigger, which
-produced two rows of pills, and since every preset was hidden the trigger could never
-match one, so it always rendered in the filled "custom range" variant instead of the
-ghost variant the application uses.
-
-`src/components/CustomRangeButton.tsx` composes the same built-in primitives the host
-uses (`Button` + `Popover` + `DatePickerWithRange`), which keeps the application's own
-components while leaving full control over the appearance: one ghost button, draft state
-while the popover is open, apply/clear actions, and the filled variant only while a custom
-range is actually applied.
-
-## Install
-
-Import `release/contribution-tracker-stats-<version>.zip`
-(or the `contribution-tracker-stats.zip` copy) in
-**Settings → Add-ons → Import from file**.
-
-## Manifest shape
-
-```jsonc
-{
-  "id": "contribution-tracker-stats",
-  "name": "Contribution Tracker Stats",
-  "version": "1.0.0",
-  "main": "dist/addon.js",
-  "sdkVersion": "3.9.0",
-  "minWealthfolioVersion": "3.7.0",
-  "icon": "chart-bar",
-  "hostDependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@wealthfolio/addon-sdk": "^3.9.0"
-  },
-  "permissions": [
-    {
-      "category": "activities",
-      "purpose": "Reads deposit activities to calculate contribution statistics.",
-      "functions": [{ "name": "getAll", "isDeclared": true, "isDetected": true }]
-    }
-  ],
-  "contributes": {
-    "routes": [{ "id": "contribution-stats" }],
-    "links": {
-      "sidebar": [{ "route": "contribution-stats", "label": "Contribution Stats", "icon": "chart-bar" }]
-    }
-  }
-}
-```
-
-Notes that cost several iterations to get right:
-
-- there is **no `entry` field**; the entry point is `main`
-- `permissions[].functions` is an array of `{ name, isDeclared, isDetected }` objects,
-  not strings
-- `permissions[].purpose` is required
-- routes live in `contributes.routes`, links in `contributes.links.<slot>`
-- `contributes.routes[].id` **must** equal the `id` passed to `ctx.router.add`
-- `contributes.routes[].path` is relative to `/addons/<addon-id>`; omit it for the
-  addon root. Absolute paths and `..` are rejected
-- do **not** call `ctx.sidebar.addItem` when the sidebar entry comes from
-  `contributes.links.sidebar`. A runtime sidebar item with its own `route` creates a
-  second navigation target that has no matching runtime route, and the host then reports
-  `Addon route '<id>' is not available`
-- `routes[].id` and `links[].id` should match, as in the reference addon
-
-Runtime wiring that works (mirrors the documented reference addon):
-
-```ts
-ctx.router.add({
-  id: 'contribution-stats',                  // === contributes.routes[0].id
-  path: '/addons/contribution-tracker-stats', // === /addons/<manifest.id>
-  component: Route,
-});
-```
-
-- the runtime route `path` is the **absolute** host mount `/addons/<manifest.id>`.
-  Registering `/<manifest.id>` leaves the declared route unresolvable and the host
-  reports `Addon route '<id>' is not available` while the sidebar entry still shows
-  (it is built declaratively, without running any addon code)
-- the route `id` must equal `contributes.routes[].id`; the sidebar link `route`
-  references that same id
-- `validate.mjs` asserts the built bundle registers `/addons/<manifest.id>` and
-  rejects a bare `/<manifest.id>` mount, so this cannot regress silently
-
-## Data source
-
-`ctx.api.activities.getAll()` resolves `ActivityDetails`, whose shape differs from
-`Activity`:
-
-| Field | `ActivityDetails` (`getAll`) | `Activity` |
-| --- | --- | --- |
-| date | `date` | `activityDate` |
-| amount | `amount` (string) | `amount` (string) |
-| symbol | `assetSymbol` | `symbol` |
-
-Reading `activityDate` from a `getAll()` result silently yields an empty chart, so
-`src/lib/intake.ts` accepts both shapes and is covered by a regression test. Deposits are
-rows whose `activityType` (or `activityTypeOverride`) is `DEPOSIT`; rows with a zero amount
-or an unparseable date are dropped and counted.
-
-Every load logs one diagnostic line to the host logger:
+**The chart is empty.** The addon counts only activities of type `DEPOSIT`. If your
+deposits were imported as something else (for example `TRANSFER_IN` or plain transfers),
+they are not picked up. Check the Activities page and adjust the import, or open the
+browser console and look for the addon's diagnostic line:
 
 ```
-[contribution-tracker-stats] fetched=1234 deposits=87 kept=87 skippedNoDate=0 skippedZeroAmount=0 types={"BUY":800,"DEPOSIT":87,...}
+[contribution-tracker-stats] fetched=1234 deposits=87 kept=87 skippedNoDate=0 skippedZeroAmount=0 types={"BUY":800,"DEPOSIT":87,…}
 ```
 
-If the chart is ever empty again, that line says whether the host returned rows, which
-types they had, and how many deposits were dropped and why.
+It reports how many rows the host returned, which types they had, and how many deposits
+were dropped and why.
 
-Aggregation helpers are pure in `src/lib/contributions.ts`; the host bridge lives in
-`src/hooks/useContributions.ts`.
+**Amounts are hidden.** Someone turned on privacy mode, or the eye button was pressed.
+The state is shared across Wealthfolio, so check the application's own privacy setting.
 
-## i18n
+## Privacy and data
 
-Translations are registered with `registerTranslations()` in `enable()` and read with
-`useAddonTranslation()`. `src/i18n.ts` ships an `en` bundle (the host fallback) and a
-`pl` bundle. Code, comments and identifiers are English; user-facing strings come from
-the bundles.
+The addon requests a single permission: `activities.getAll`. It uses it to read your
+deposits and nothing else. No data leaves your machine — the addon has no network access,
+no analytics and no third-party dependencies at runtime.
 
-## Release automation
+## Contributing
 
-### `ci.yml` — every push and pull request
-
-| Job | What it does |
-| --- | --- |
-| `verify` | `typecheck` → `test` → `build` → `validate` on Node 20.19 and 22 |
-| `package` | Builds and zips the addon as a downloadable artifact |
-| `self-check` | Packs and inspects the archive: root `manifest.json`, an `addon.js` entry, no `node_modules`, no sourcemaps; on a tag, asserts the tag matches the manifest version |
-
-### `release.yml` — `v*` tags and manual dispatch
-
-The tag carries the version. A tag push publishes exactly that version; manual dispatch
-takes a `bump` choice (patch/minor/major) and uses the incremented result. The workflow
-performs **no git writes** — no commits, no tag pushes — so there is nothing to keep in
-sync and no risk of a release trying to move an existing tag. On manual dispatch
-GitHub creates the tag as part of the release.
-
-`--version` only rewrites the **staged** manifest, so a tagged build never mutates the
-checkout, and both `--version 1.2.3` and `--version=1.2.3` are accepted. An invalid or
-missing value aborts the release instead of silently falling back to a bump.
-
-`manifest.json` therefore keeps whatever version the last local `npm run package` wrote;
-the released version lives in the tag and in the packaged archive.
-
-Sourcemaps are excluded from release archives (`build-release.mjs` removes
-`addon.js.map`), and `self-check` in `ci.yml` fails if one sneaks in.
+Bug reports and pull requests are welcome. See [DEVELOPING.md](DEVELOPING.md) for the
+build, validation and release process, and the host-API rules this addon follows.

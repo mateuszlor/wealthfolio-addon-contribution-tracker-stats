@@ -130,6 +130,10 @@ async function stage(version) {
   );
 
   await cp(path.join(ROOT, 'README.md'), path.join(STAGE, 'README.md'));
+  await cp(path.join(ROOT, 'DEVELOPING.md'), path.join(STAGE, 'DEVELOPING.md'));
+
+  const license = path.join(ROOT, 'LICENSE');
+  if (existsSync(license)) await cp(license, path.join(STAGE, 'LICENSE'));
 
   // Ship the sourcemap only outside release archives.
   const dist = path.join(STAGE, 'dist');

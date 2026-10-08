@@ -155,7 +155,12 @@ test('tolerates a non-array payload', () => {
 
 const { mod: contributions, cleanup: cleanupContributions } = await loadTs('src/lib/contributions.ts');
 
-const record = (iso, amount) => ({ date: new Date(iso), amount });
+const record = (iso, amount, account = 'acc-1', accountName = 'Main') => ({
+  date: new Date(iso),
+  amount,
+  accountId: account,
+  accountName: accountName || account,
+});
 
 test('buckets by month', () => {
   const buckets = contributions.bucketize(
@@ -274,6 +279,150 @@ test('drops pre-release metadata when bumping', () => {
 test('rejects invalid versions and bump types', () => {
   assert.throws(() => version.bumpVersion('1.2', 'patch'));
   assert.throws(() => version.bumpVersion('1.2.3', 'nope'));
+});
+
+/* ---------------------------------------------------------- per account */
+
+test('groups deposits by period and account', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+      record('2026-01-20T00:00:00Z', 50, 'b', 'Bank'),
+      record('2026-02-02T00:00:00Z', 70, 'a', 'Broker'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => a.id),
+    ['a', 'b'],
+    'largest contributor first',
+  );
+  assert.deepEqual(
+    result.accounts.map((a) => a.name),
+    ['Broker', 'Bank'],
+  );
+
+  assert.deepEqual(
+    result.buckets.map((b) => b.key),
+    ['2026-01', '2026-02'],
+  );
+  assert.equal(result.buckets[0].values.a, 100);
+  assert.equal(result.buckets[0].values.b, 50);
+  assert.equal(result.buckets[0].total, 150);
+  assert.equal(result.buckets[1].values.b, 0, 'missing account is zero, not absent');
+});
+
+test('every bucket carries every account, even with no deposits', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a'),
+      record('2026-01-06T00:00:00Z', 30, 'b'),
+      record('2026-04-05T00:00:00Z', 70, 'a'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.buckets.map((b) => b.key),
+    ['2026-01', '2026-02', '2026-03', '2026-04'],
+    'empty months are inserted',
+  );
+
+  for (const bucket of result.buckets) {
+    assert.ok('a' in bucket.values, 'account a present in every bucket');
+    assert.ok('b' in bucket.values, 'account b present in every bucket');
+  }
+
+  assert.equal(result.buckets[1].values.a, 0);
+  assert.equal(result.buckets[1].values.b, 0);
+  assert.equal(result.buckets[3].values.a, 70);
+});
+
+test('account order is by total then name, so it is stable across reloads', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Zeta'),
+      record('2026-01-06T00:00:00Z', 100, 'b', 'Alpha'),
+      record('2026-01-07T00:00:00Z', 400, 'c', 'Mid'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => a.name),
+    ['Mid', 'Alpha', 'Zeta'],
+  );
+});
+
+test('a later activity can supply the account name an earlier one lacked', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 10, 'a', 'a'),
+      record('2026-02-05T00:00:00Z', 10, 'a', 'Broker'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => a.name),
+    ['Broker'],
+  );
+});
+
+test('splitting one account yields a single series with the same total', () => {
+  const records = [record('2026-01-05T00:00:00Z', 100), record('2026-02-05T00:00:00Z', 250)];
+
+  const split = contributions.bucketizeByAccount(records, 'month', 'en');
+  const total = contributions.fillGaps(contributions.bucketize(records, 'month', 'en'), 'month', 'en');
+
+  assert.equal(split.accounts.length, 1);
+  assert.equal(
+    split.buckets.reduce((sum, b) => sum + b.total, 0),
+    total.reduce((sum, b) => sum + b.total, 0),
+  );
+});
+
+test('splitting nothing yields no accounts and no buckets', () => {
+  const result = contributions.bucketizeByAccount([], 'month', 'en');
+  assert.deepEqual(result.accounts, []);
+  assert.deepEqual(result.buckets, []);
+});
+
+test('unknown accounts collapse into a single series', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      { date: new Date('2026-01-05T00:00:00Z'), amount: 10 },
+      { date: new Date('2026-01-06T00:00:00Z'), amount: 20 },
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => a.id),
+    ['unknown-account'],
+  );
+  assert.equal(result.buckets[0].total, 30);
+});
+
+test('intake reads accountId and accountName', () => {
+  const { records } = intake.toContributionRecords([
+    {
+      activityType: 'DEPOSIT',
+      date: '2026-01-05T00:00:00Z',
+      amount: '100',
+      accountId: 'acc-9',
+      accountName: '  Bank  ',
+    },
+  ]);
+
+  assert.equal(records[0].accountId, 'acc-9');
+  assert.equal(records[0].accountName, 'Bank', 'account name is trimmed');
 });
 
 /* ---------------------------------------------------------------- gaps */

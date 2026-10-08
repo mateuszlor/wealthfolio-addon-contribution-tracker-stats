@@ -12,6 +12,10 @@ export interface ContributionRecord {
   date: Date;
   /** Positive contribution amount, in the base currency. */
   amount: number;
+  /** Account the deposit was recorded against. */
+  accountId: string;
+  /** Display name for the account; falls back to the id when unnamed. */
+  accountName: string;
 }
 
 export interface Bucket {
@@ -126,6 +130,12 @@ export function filterByRange(
   });
 }
 
+/** Sortable key for the period a date belongs to: `2026`, `2026-01`, `2026-01-15`. */
+export function periodKey(date: Date, granularity: Granularity): string {
+  if (granularity === 'year') return String(date.getFullYear());
+  return formatKey(date, granularity);
+}
+
 /** Groups records into chronological buckets of the requested granularity. */
 export function bucketize(
   records: ContributionRecord[],
@@ -135,36 +145,19 @@ export function bucketize(
   const buckets = new Map<string, Bucket>();
 
   for (const record of records) {
-    const { date, amount } = record;
-    const year = date.getFullYear();
-    const month = pad(date.getMonth() + 1);
-    const day = pad(date.getDate());
-
-    let key: string;
-    let label: string;
-
-    switch (granularity) {
-      case 'year':
-        key = `${year}`;
-        label = `${year}`;
-        break;
-      case 'day':
-        key = `${year}-${month}-${day}`;
-        label = key;
-        break;
-      case 'month':
-      default:
-        key = `${year}-${month}`;
-        label = formatMonthLabel(date, locale);
-        break;
-    }
-
+    const key = periodKey(record.date, granularity);
     const existing = buckets.get(key);
+
     if (existing) {
-      existing.total += amount;
+      existing.total += record.amount;
       existing.count += 1;
     } else {
-      buckets.set(key, { key, label, total: amount, count: 1 });
+      buckets.set(key, {
+        key,
+        label: labelFor(record.date, granularity, locale),
+        total: record.amount,
+        count: 1,
+      });
     }
   }
 
@@ -181,6 +174,57 @@ export function bucketize(
  * `maxBuckets` guards against exploding the series: a day-level view over a year
  * would otherwise render 365 empty columns.
  */
+export interface Period {
+  key: string;
+  label: string;
+}
+
+/**
+ * Every period between the first and last key, inclusive.
+ *
+ * Shared by the total and the per-account view so both lay the bars out on the
+ * same axis. `maxBuckets` keeps the most recent periods when the span is too
+ * dense to plot: a day-level view over a year would otherwise emit 365 columns.
+ */
+export function buildPeriodAxis(
+  firstKey: string,
+  lastKey: string,
+  granularity: Granularity,
+  locale = 'en',
+  maxBuckets = 400,
+): Period[] {
+  const first = parseKey(firstKey, granularity);
+  const last = parseKey(lastKey, granularity);
+  if (!first || !last) return [];
+
+  const periods: Period[] = [];
+
+  if (granularity === 'year') {
+    for (let year = first.getFullYear(); year <= last.getFullYear(); year += 1) {
+      periods.push({ key: String(year), label: String(year) });
+    }
+  } else {
+    const cursor = new Date(first.getTime());
+    while (cursor.getTime() <= last.getTime()) {
+      periods.push({
+        key: formatKey(cursor, granularity),
+        label: labelFor(cursor, granularity, locale),
+      });
+      if (granularity === 'day') cursor.setDate(cursor.getDate() + 1);
+      else cursor.setMonth(cursor.getMonth() + 1);
+    }
+  }
+
+  return periods.length > maxBuckets ? periods.slice(-maxBuckets) : periods;
+}
+
+/**
+ * Inserts empty buckets for periods between the first and last one.
+ *
+ * Without this a month with no contributions disappears from the axis and the
+ * remaining bars sit at the wrong horizontal positions, so the spacing no longer
+ * reflects time.
+ */
 export function fillGaps(
   buckets: Bucket[],
   granularity: Granularity,
@@ -190,31 +234,15 @@ export function fillGaps(
   if (buckets.length < 2) return buckets;
 
   const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
-  const first = parseKey(buckets[0].key, granularity);
-  const last = parseKey(buckets[buckets.length - 1].key, granularity);
-  if (!first || !last) return buckets;
+  const axis = buildPeriodAxis(
+    buckets[0].key,
+    buckets[buckets.length - 1].key,
+    granularity,
+    locale,
+    maxBuckets,
+  );
 
-  const filled: Bucket[] = [];
-
-  if (granularity === 'year') {
-    for (let year = first.getFullYear(); year <= last.getFullYear(); year += 1) {
-      const key = String(year);
-      filled.push(byKey.get(key) ?? { key, label: key, total: 0, count: 0 });
-    }
-  } else {
-    const cursor = new Date(first.getTime());
-    while (cursor.getTime() <= last.getTime()) {
-      const key = formatKey(cursor, granularity);
-      filled.push(
-        byKey.get(key) ?? { key, label: labelFor(cursor, granularity, locale), total: 0, count: 0 },
-      );
-      if (granularity === 'day') cursor.setDate(cursor.getDate() + 1);
-      else cursor.setMonth(cursor.getMonth() + 1);
-    }
-  }
-
-  // Keep the most recent periods when the span is too dense to plot.
-  return filled.length > maxBuckets ? filled.slice(-maxBuckets) : filled;
+  return axis.map((period) => byKey.get(period.key) ?? { ...period, total: 0, count: 0 });
 }
 
 function parseKey(key: string, granularity: Granularity): Date | undefined {
@@ -232,9 +260,123 @@ function formatKey(date: Date, granularity: 'month' | 'day'): string {
   return granularity === 'day' ? `${date.getFullYear()}-${month}-${day}` : `${date.getFullYear()}-${month}`;
 }
 
-function labelFor(date: Date, granularity: 'month' | 'day', locale: string): string {
-  return granularity === 'month' ? formatMonthLabel(date, locale) : formatKey(date, 'day');
+function labelFor(date: Date, granularity: Granularity, locale: string): string {
+  if (granularity === 'year') return String(date.getFullYear());
+  if (granularity === 'month') return formatMonthLabel(date, locale);
+  return formatKey(date, 'day');
 }
+/* ------------------------------------------------------------ per account */
+
+/**
+ * Bucket id used when an activity carries no account.
+ *
+ * Rows without an account collapse into one series rather than producing a stack
+ * of nameless slices, and a record reaching this module with no account at all
+ * cannot produce a series literally named "undefined".
+ */
+export const UNKNOWN_ACCOUNT = 'unknown-account';
+
+export interface AccountRef {
+  id: string;
+  name: string;
+}
+
+export interface SplitBucket {
+  key: string;
+  label: string;
+  /** Amount per account id; every account is present, defaulting to 0. */
+  values: Record<string, number>;
+  /** Sum across accounts, for axis scaling. */
+  total: number;
+}
+
+export interface SplitResult {
+  /** Stable ordering: largest contributor first, then by name. */
+  accounts: AccountRef[];
+  buckets: SplitBucket[];
+}
+
+/**
+ * Groups records by period and account.
+ *
+ * Every period on the axis carries a value for every account, including zeros, so
+ * a stacked chart keeps a stable segment order and never leaves a hole where an
+ * account had no deposits.
+ */
+export function bucketizeByAccount(
+  records: ContributionRecord[],
+  granularity: Granularity,
+  locale = 'en',
+  maxBuckets = 400,
+): SplitResult {
+  if (records.length === 0) return { accounts: [], buckets: [] };
+
+  const accountMeta = new Map<string, { name: string; total: number }>();
+  const cells = new Map<string, Map<string, number>>();
+  const keys: string[] = [];
+  const seen = new Set<string>();
+
+  for (const record of records) {
+    const key = periodKey(record.date, granularity);
+    const accountId =
+      typeof record.accountId === 'string' && record.accountId
+        ? record.accountId
+        : UNKNOWN_ACCOUNT;
+    const accountName =
+      typeof record.accountName === 'string' && record.accountName.trim()
+        ? record.accountName.trim()
+        : accountId;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      keys.push(key);
+    }
+
+    const meta = accountMeta.get(accountId);
+    if (meta) {
+      meta.total += record.amount;
+      // A later activity may carry the account name where an earlier one did not.
+      if (meta.name === accountId && accountName !== accountId) {
+        meta.name = accountName;
+      }
+    } else {
+      accountMeta.set(accountId, { name: accountName, total: record.amount });
+    }
+
+    let row = cells.get(key);
+    if (!row) {
+      row = new Map<string, number>();
+      cells.set(key, row);
+    }
+    row.set(accountId, (row.get(accountId) ?? 0) + record.amount);
+  }
+
+  keys.sort();
+
+  const accounts: AccountRef[] = Array.from(accountMeta.entries())
+    .map(([id, meta]) => ({ id, name: meta.name }))
+    .sort((a, b) => {
+      const delta = accountMeta.get(b.id)!.total - accountMeta.get(a.id)!.total;
+      return delta !== 0 ? delta : a.name.localeCompare(b.name);
+    });
+
+  const axis = buildPeriodAxis(keys[0], keys[keys.length - 1], granularity, locale, maxBuckets);
+
+  const buckets: SplitBucket[] = axis.map((period) => {
+    const row = cells.get(period.key);
+    const values: Record<string, number> = {};
+    let total = 0;
+    for (const account of accounts) {
+      const value = row?.get(account.id) ?? 0;
+      values[account.id] = value;
+      total += value;
+    }
+    return { key: period.key, label: period.label, values, total };
+  });
+
+  return { accounts, buckets };
+}
+
 export function formatMonthLabel(date: Date, locale = 'en'): string {
   try {
     return new Intl.DateTimeFormat(locale, {

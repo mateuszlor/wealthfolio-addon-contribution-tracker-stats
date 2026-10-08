@@ -4,7 +4,7 @@
  * Kept free of React and of the SDK so it can be regression tested directly.
  */
 
-import { toAmount, toDate, type ContributionRecord } from './contributions';
+import { toAmount, toDate, UNKNOWN_ACCOUNT, type ContributionRecord } from './contributions';
 
 export const DEPOSIT = 'DEPOSIT';
 
@@ -36,7 +36,12 @@ export interface RawActivity {
   currency?: string | null;
   assetSymbol?: string | null;
   symbol?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
 }
+
+/** Bucket id used when the host does not name an account on the activity. */
+export { UNKNOWN_ACCOUNT };
 
 export interface Intake {
   records: ContributionRecord[];
@@ -55,6 +60,25 @@ export function isDeposit(activity: RawActivity): boolean {
 /** `ActivityDetails.date` first, `Activity.activityDate` as the fallback. */
 export function readDate(activity: RawActivity): Date | undefined {
   return toDate(activity.date ?? activity.activityDate);
+}
+
+/**
+ * Resolves the account a deposit belongs to.
+ *
+ * `ActivityDetails` carries `accountId` / `accountName`. Older rows and some
+ * import shapes omit them, so everything unidentifiable collapses into one
+ * bucket rather than producing a stack of nameless slices.
+ */
+export function readAccount(activity: RawActivity): { id: string; name: string } {
+  const id = typeof activity.accountId === 'string' && activity.accountId
+    ? activity.accountId
+    : UNKNOWN_ACCOUNT;
+
+  const name = typeof activity.accountName === 'string' && activity.accountName.trim()
+    ? activity.accountName.trim()
+    : id;
+
+  return { id, name };
 }
 
 /**
@@ -91,7 +115,8 @@ export function toContributionRecords(activities: unknown): Intake {
       continue;
     }
 
-    records.push({ date, amount });
+    const account = readAccount(activity);
+    records.push({ date, amount, accountId: account.id, accountName: account.name });
   }
 
   records.sort((a, b) => a.date.getTime() - b.date.getTime());

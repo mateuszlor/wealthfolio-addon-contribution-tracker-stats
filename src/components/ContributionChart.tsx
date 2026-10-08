@@ -4,31 +4,29 @@ import {
   BarChart,
   CartesianGrid,
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   XAxis,
   YAxis,
   type ChartConfig,
 } from '@wealthfolio/ui/chart';
-import type { Bucket } from '../lib/contributions';
 
-/**
- * `theme` lets `ChartStyle` emit concrete colours per mode, so the bar colour
- * does not depend on `--chart-1` being defined in the sandbox. Routing the colour
- * through a CSS variable left the bars black whenever the token was missing.
- */
-const chartConfig = {
-  total: {
-    label: 'Contributions',
-    theme: {
-      light: 'hsl(142 64% 34%)',
-      dark: 'hsl(142 44% 48%)',
-    },
-  },
-} satisfies ChartConfig;
+export interface ChartSeries {
+  /** Field name on each row. Kept short because it is also a CSS identifier. */
+  dataKey: string;
+  label: string;
+}
+
+export interface ChartRow {
+  label: string;
+  [dataKey: string]: string | number;
+}
 
 export interface ContributionChartProps {
-  buckets: Bucket[];
+  rows: ChartRow[];
+  series: ChartSeries[];
   formatValue: (value: number) => string;
   /** Compact axis ticks; the currency belongs in the tooltip, not on every tick. */
   formatTick: (value: number) => string;
@@ -41,20 +39,101 @@ export interface ContributionChartProps {
 }
 
 /**
+ * Colour for the nth series — curated muted palette matching Wealthfolio's
+ * design language (see screenshots). Colours are sophisticated, not pastel:
+ * lower saturation, balanced lightness, good contrast in both themes.
+ *
+ * Index 0 = green (contributions), then blue, purple, amber, teal, rose...
+ * Beyond the palette length the golden angle takes over so hues never repeat.
+ */
+export function seriesColor(index: number): { light: string; dark: string } {
+  // Hand-picked muted hues that sit well in Wealthfolio's UI (both light/dark).
+  // Saturation ~25-30%, lightness tuned per hue for consistent perceived brightness.
+  const curated: Array<{ light: string; dark: string }> = [
+    { light: 'hsl(142 28% 38%)', dark: 'hsl(142 28% 52%)' },  // green (contributions)
+    { light: 'hsl(217 30% 42%)', dark: 'hsl(217 30% 58%)' },  // blue
+    { light: 'hsl(262 28% 44%)', dark: 'hsl(262 28% 60%)' },  // purple
+    { light: 'hsl(28 28% 42%)',  dark: 'hsl(28 28% 58%)' },   // amber
+    { light: 'hsl(185 28% 38%)', dark: 'hsl(185 28% 54%)' },  // teal
+    { light: 'hsl(340 26% 42%)', dark: 'hsl(340 26% 58%)' },  // rose
+    { light: 'hsl(45 28% 44%)',  dark: 'hsl(45 28% 60%)' },   // gold
+    { light: 'hsl(280 26% 44%)', dark: 'hsl(280 26% 60%)' },  // violet
+  ];
+
+  if (index < curated.length) return curated[index];
+
+  // Fallback: golden angle with same muted saturation/lightness range.
+  const hue = (142 + (index - curated.length + 1) * 137.508) % 360;
+  return {
+    light: `hsl(${hue} 28% 40%)`,
+    dark: `hsl(${hue} 28% 56%)`,
+  };
+}
+
+/**
+ * Builds the chart config.
+ *
+ * Colours are literal rather than `var(--chart-1)`: `ChartStyle` expands the
+ * config into `--color-<key>`, so a token-based colour leaves `fill` unresolved
+ * and the bars render black whenever the token is missing.
+ */
+function buildConfig(series: ChartSeries[]): ChartConfig {
+  const config: ChartConfig = {};
+  for (const item of series) {
+    const color = seriesColor(series.indexOf(item));
+    config[item.dataKey] = {
+      label: item.label,
+      theme: { light: color.light, dark: color.dark },
+    };
+  }
+  return config;
+}
+
+/** The subset of recharts' tooltip entry the formatter reads. */
+interface ChartTooltipItem {
+  color?: string;
+  payload?: { fill?: string };
+}
+
+/** Sums the tooltip payload, tolerating absent or non-numeric values. */
+function sumOf(payload: unknown): number {
+  if (!Array.isArray(payload)) return 0;
+  return payload.reduce((sum, item) => {
+    const value = Number((item as { value?: unknown } | undefined)?.value ?? 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+/**
  * Native Wealthfolio chart: the same `ChartContainer` / `ChartTooltipContent`
  * primitives the spending reports use, so colours follow the host theme.
+ *
+ * Renders one bar per series. With a single series that is a plain bar chart; with
+ * several they share a `stackId` and form a stacked column, which is what the
+ * per-account view needs.
  */
 export function ContributionChart({
-  buckets,
+  rows,
+  series,
   formatValue,
   formatTick,
   hideAxis = false,
 }: ContributionChartProps) {
-  if (buckets.length === 0) return null;
+  if (rows.length === 0 || series.length === 0) return null;
+
+  const stacked = series.length > 1;
+
+  // `ChartLegendContent` reads the swatch colour from the payload item and the
+  // label from the chart config by `dataKey`, so both have to be present.
+  const legendPayload = series.map((item) => ({
+    dataKey: item.dataKey,
+    value: item.label,
+    color: `var(--color-${item.dataKey})`,
+  }));
 
   return (
-    <ChartContainer config={chartConfig} className="w-full h-[280px] aspect-auto">
-      <BarChart data={buckets} margin={{ left: 4, right: 8, top: 8 }}>
+    <ChartContainer config={buildConfig(series)} className="w-full h-[280px] aspect-auto">
+      <BarChart data={rows} margin={{ left: 4, right: 8, top: 8 }}>
         <CartesianGrid vertical={false} />
         <XAxis
           dataKey="label"
@@ -76,12 +155,70 @@ export function ContributionChart({
           cursor={{ fill: 'hsl(var(--muted))' }}
           content={
             <ChartTooltipContent
-              labelKey="label"
-              formatter={(value) => formatValue(Number(value))}
+              indicator="dot"
+              // `labelKey` is deliberately not set. With it, ChartTooltipContent
+              // skips the branch that falls back to the x-axis label and looks up
+              // `config[labelKey]` instead, which does not exist - the header then
+              // resolves to undefined and labelFormatter renders "undefined".
+              labelFormatter={(label, payload) => (
+                <div className="flex items-center justify-between gap-6">
+                  <span>{String(label ?? '')}</span>
+                  {/* With one series the only row already shows the amount, so
+                      repeating it in the header is noise. */}
+                  {series.length > 1 && (
+                    <span className="tabular-nums">{formatValue(sumOf(payload))}</span>
+                  )}
+                </div>
+              )}
+              formatter={(value, name, item) => {
+                const swatch = (item as ChartTooltipItem)?.color ?? item?.payload?.fill;
+                return (
+                  <div className="flex w-full items-center justify-between gap-6">
+                    <span className="flex items-center gap-1.5">
+                      {swatch && (
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-[2px]"
+                          style={{ backgroundColor: swatch }}
+                        />
+                      )}
+                      <span className="text-muted-foreground">{String(name)}</span>
+                    </span>
+                    <span className="tabular-nums font-medium">{formatValue(Number(value))}</span>
+                  </div>
+                );
+              }}
             />
           }
         />
-        <Bar dataKey="total" fill="var(--color-total)" radius={4} />
+        {series.map((item, index) => (
+          <Bar
+            key={item.dataKey}
+            dataKey={item.dataKey}
+            name={item.label}
+            stackId={stacked ? 'contributions' : undefined}
+            fill={`var(--color-${item.dataKey})`}
+            // Only the topmost segment gets rounded corners, otherwise stacked
+            // segments show rounded edges in the middle of the column.
+            radius={index === series.length - 1 ? 4 : 0}
+          />
+        ))}
+        {/* Recharts renders its own legend markup unless `content` is supplied, so
+            passing `content` avoids a second, unstyled legend on top of this one.
+
+            `nameKey` is deliberately omitted: `ChartLegendContent` looks the label
+            up in the chart config under that key, and the config is keyed by
+            dataKey. Passing `nameKey="label"` looked up `config["label"]`, which
+            does not exist, and rendered empty entries. */}
+        <ChartLegend
+          verticalAlign="bottom"
+          content={
+            <ChartLegendContent
+              payload={legendPayload}
+              verticalAlign="bottom"
+              className="flex-wrap justify-start gap-x-4 gap-y-1"
+            />
+          }
+        />
       </BarChart>
     </ChartContainer>
   );

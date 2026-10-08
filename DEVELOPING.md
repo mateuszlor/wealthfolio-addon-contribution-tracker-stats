@@ -67,6 +67,27 @@ scripts/
 The three `lib/` modules are deliberately free of React and of the SDK, which is what makes
 them testable. The hooks are the only place that touches `ctx.api`.
 
+### Per-account split
+
+`bucketizeByAccount` returns `accounts` plus a bucket per period, where every bucket holds a
+value for **every** account (zero included). That is what lets the chart render a stable
+stack: if a period were missing an account key, the segment order would change between
+columns.
+
+Both views share `buildPeriodAxis`, so the total and the split chart lay bars on exactly
+the same x-axis. `fillGaps` is a thin wrapper over it for the total view.
+
+Account ordering is by total contribution, then by name. Without the name tiebreak the
+legend would shuffle between reloads when two accounts contribute equally. Account names
+are normalised in the lib (`readAccount` in `intake.ts`, plus a guard in
+`bucketizeByAccount`) rather than at the call sites, because a record that reaches the lib
+without an account would otherwise produce a series literally named `undefined`.
+
+The chart component is series-generic: one series renders a plain bar chart, several share
+a `stackId` and stack. Colours come from `seriesColor(index)`, a literal palette — never
+from a CSS token, for the reason described above. Only the topmost segment gets
+`radius`, otherwise every stacked segment shows rounded corners mid-column.
+
 ## Host API rules worth knowing
 
 These cost real debugging time. `validate.mjs` and `typecheck` now enforce most of them,
@@ -324,6 +345,9 @@ concentrated on the parts that fail silently:
 - `ActivityDetails` vs `Activity` field names, `activityTypeOverride`, comma decimal
   separators, negative amounts, unparseable dates, non-array payloads
 - bucketing by month/day/year, chronological ordering
+- the per-account split: grouping, zero-filling every account in every bucket, stable
+  ordering, name supplied by a later activity, single-account and empty input, and the
+  unknown-account collapse
 - interval windows and gap filling, including the bucket ceiling
 - the privacy mask: fixed width, no digits, separators or unit suffix, identical for every
   locale and every magnitude

@@ -45,6 +45,15 @@ period. They combine: *1Y + Month* gives twelve monthly bars, *1M + Day* gives o
 day of the current month. Periods without deposits are drawn as empty slots, so the
 spacing always reflects time.
 
+### Splitting by account
+
+When your deposits span more than one account, a **Total / Per account** switch appears
+next to the grouping tabs. *Per account* stacks each period's bar into one segment per
+account, so you can see at a glance which account carried the month — and how that changes
+year over year. Segments are ordered by total contribution and colours follow the host
+theme. Accounts without a name, or without deposits in a given period, are handled without
+leaving gaps.
+
 ### Privacy
 
 The eye button in the top-right corner hides the amounts: every amount in the summary and

@@ -5,11 +5,13 @@ import {
   AmountDisplay,
   Button,
   FormattingProvider,
-  IntervalSelector,
   Icons,
+  IntervalSelector,
   Tabs,
   TabsList,
   TabsTrigger,
+  ToggleGroup,
+  ToggleGroupItem,
   getInitialIntervalData,
   useAmountFormatting,
   useDateFormatting,
@@ -17,9 +19,16 @@ import {
 } from '@wealthfolio/ui';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
-import { ContributionChart } from './ContributionChart';
+import { ContributionChart, seriesColor, type ChartRow, type ChartSeries } from './ContributionChart';
 import { CustomRangeButton } from './CustomRangeButton';
-import { bucketize, fillGaps, filterByRange, summarize, type Granularity } from '../lib/contributions';
+import {
+  bucketize,
+  bucketizeByAccount,
+  fillGaps,
+  filterByRange,
+  summarize,
+  type Granularity,
+} from '../lib/contributions';
 import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
@@ -27,6 +36,8 @@ export interface ContributionStatsPageProps {
 }
 
 const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
+
+type SeriesMode = 'total' | 'account';
 
 const STORAGE_KEY = 'contribution-tracker-stats.interval';
 
@@ -69,6 +80,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     () => getInitialIntervalData('1Y').range ?? EMPTY_RANGE,
   );
   const [customRange, setCustomRange] = React.useState<CustomRange | undefined>(undefined);
+  const [seriesMode, setSeriesMode] = React.useState<SeriesMode>('total');
 
   const currency = 'PLN';
 
@@ -109,6 +121,51 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     () => fillGaps(bucketize(scoped, granularity, locale), granularity, locale),
     [scoped, granularity, locale],
   );
+
+  const split = React.useMemo(
+    () => bucketizeByAccount(scoped, granularity, locale),
+    [scoped, granularity, locale],
+  );
+
+  // Splitting is meaningless with a single account, so the control only appears
+  // once there is something to split.
+  const canSplit = split.accounts.length > 1;
+  const splitMode: SeriesMode = canSplit && seriesMode === 'account' ? 'account' : 'total';
+
+  const { rows, series } = React.useMemo(() => {
+    if (splitMode === 'account') {
+      const next: ChartSeries[] = split.accounts.map((account, index) => {
+        const dataKey = `s${index}`;
+        return { dataKey, label: account.name, ...seriesColor(index) };
+      });
+
+      const data: ChartRow[] = split.buckets.map((bucket) => {
+        const row: ChartRow = { label: bucket.label };
+        split.accounts.forEach((account, index) => {
+          row[`s${index}`] = bucket.values[account.id] ?? 0;
+        });
+        return row;
+      });
+
+      return { rows: data, series: next };
+    }
+
+    return {
+      rows: buckets.map((bucket) => ({ label: bucket.label, total: bucket.total })),
+      series: [
+        {
+          dataKey: 'total',
+          label: t('totalContributions'),
+          ...seriesColor(0),
+        },
+      ],
+    };
+  }, [splitMode, split, buckets, t]);
+
+  // Toggling back to the total view after splitting is the expected round trip.
+  React.useEffect(() => {
+    if (!canSplit && seriesMode === 'account') setSeriesMode('total');
+  }, [canSplit, seriesMode]);
 
   const handleIntervalSelect = React.useCallback(
     (code: TimePeriod, _description: string, next: CustomRange | undefined) => {
@@ -210,24 +267,45 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               <CustomRangeButton value={customRange} onApply={handleRangeChange} />
             </div>
 
-            <Tabs
-              value={granularity}
-              onValueChange={(value) => setGranularity(value as Granularity)}
-            >
-              <TabsList>
-                {GRANULARITIES.map((value) => (
-                  <TabsTrigger key={value} value={value}>
-                    {t(value)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Tabs
+                value={granularity}
+                onValueChange={(value) => setGranularity(value as Granularity)}
+              >
+                <TabsList>
+                  {GRANULARITIES.map((value) => (
+                    <TabsTrigger key={value} value={value}>
+                      {t(value)}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
 
-            {buckets.length === 0 ? (
+              {canSplit && (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  value={seriesMode}
+                  onValueChange={(value) => {
+                    if (value) setSeriesMode(value as SeriesMode);
+                  }}
+                >
+                  <ToggleGroupItem value="total" variant="outline" aria-label={t('viewTotal')}>
+                    {t('viewTotal')}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="account" variant="outline" aria-label={t('viewPerAccount')}>
+                    {t('viewPerAccount')}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              )}
+            </div>
+
+            {rows.length === 0 ? (
               <p className="text-muted-foreground text-sm">{t('noContributions')}</p>
             ) : (
               <ContributionChart
-                buckets={buckets}
+                rows={rows}
+                series={series}
                 formatValue={displayValue}
                 formatTick={formatTick}
                 hideAxis={amountsHidden}

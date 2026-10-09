@@ -5,19 +5,25 @@ humans; this file is the contract an agent is expected to follow.
 
 ## Attribution is required
 
-Every artifact you produce says which agent produced it. An unattributed change is
-unreviewable — the reviewer cannot tell your reasoning from the maintainer's.
+Every artifact you produce names the agent **and the specific model** it came from. An
+unattributed change is unreviewable — the reviewer cannot tell your reasoning from the
+maintainer's — and an agent-attributed-but-model-less one is only half that, because
+behaviour differs between models and nobody can tell which one produced a given commit.
 
 | Artifact | Marker |
 | --- | --- |
-| Commit | `Co-Authored-By: OpenCode <noreply@opencode.ai>` as the last trailer |
-| Pull request body | `— produced by OpenCode` as the last line |
+| Commit | `Co-Authored-By: <agent> (<provider>/<model>) <email>` as the last trailer |
+| Pull request body | `— produced by <agent> · model <provider>/<model>` as the last line |
 | PR comment | same last line |
 | Reply to a review comment | same last line, plus a quote of the comment being answered |
 
-Name the agent, not the model version, and do not sign on behalf of the maintainer. If you
-drafted text the maintainer will send under their own name, say so in the body rather than
-signing it.
+Replace the placeholders with your own: the agent you are, and the model you are actually
+running as right now. **Do not hardcode a model name into this file or `DEVELOPING.md`** —
+different work will be done by different models, and a fixed name there goes stale and starts
+attributing commits to the wrong one.
+
+Do not sign on behalf of the maintainer. If you drafted text they will send under their own
+name, say so in the body rather than signing it.
 
 ## Verify before you claim
 

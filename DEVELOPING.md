@@ -42,18 +42,23 @@ a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
 
 ## Attribution
 
-Every artifact states who produced it. A reviewer has to be able to tell an agent's reasoning
-from the maintainer's, and that only works if it is written down.
+Every artifact names the agent and the specific model it came from. A reviewer has to be able
+to tell an agent's reasoning from the maintainer's, and behaviour differs enough between
+models that nobody can tell which one produced a given commit without being told.
 
 | Artifact | Marker |
 | --- | --- |
-| Commit | `Co-Authored-By: OpenCode <noreply@opencode.ai>` as the last trailer |
-| Pull request body | `— produced by OpenCode` as the last line |
+| Commit | `Co-Authored-By: <agent> (<provider>/<model>) <email>` as the last trailer |
+| Pull request body | `— produced by <agent> · model <provider>/<model>` as the last line |
 | PR comment | same last line |
 | Reply to a review comment | same last line, quoting the comment it answers |
 
-Name the agent rather than a model version, and never sign on the maintainer's behalf. Text
-drafted for the maintainer to send under their own name says so in the body instead.
+The placeholders are replaced per artifact with the agent and model that actually produced it.
+No model name is fixed in this file, because different work comes from different models and a
+hardcoded one would go stale and start attributing commits to the wrong author.
+
+Never sign on the maintainer's behalf. Text drafted for them to send under their own name says
+so in the body instead.
 
 Agents work under `AGENTS.md`, which carries the same rule plus the git constraints and the
 host behaviours that have already cost time here.

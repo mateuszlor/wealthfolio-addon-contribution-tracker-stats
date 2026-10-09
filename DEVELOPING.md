@@ -3,6 +3,9 @@
 Audience: developers changing this addon. For what it does and how to install it, see
 [README.md](README.md).
 
+Every artifact states who produced it — commits, pull requests and comments alike. See
+[Attribution](#attribution).
+
 ## Requirements
 
 - Node.js >= 20 (CI covers 20.19 and 22)
@@ -36,6 +39,24 @@ a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
 | `npm run version` | Prints the current version |
 | `npm run version:check` | Asserts manifest and package versions agree |
 | `npm run version:bump` / `:minor` / `:major` | Bumps the version without packaging |
+
+## Attribution
+
+Every artifact states who produced it. A reviewer has to be able to tell an agent's reasoning
+from the maintainer's, and that only works if it is written down.
+
+| Artifact | Marker |
+| --- | --- |
+| Commit | `Co-Authored-By: OpenCode <noreply@opencode.ai>` as the last trailer |
+| Pull request body | `— produced by OpenCode` as the last line |
+| PR comment | same last line |
+| Reply to a review comment | same last line, quoting the comment it answers |
+
+Name the agent rather than a model version, and never sign on the maintainer's behalf. Text
+drafted for the maintainer to send under their own name says so in the body instead.
+
+Agents work under `AGENTS.md`, which carries the same rule plus the git constraints and the
+host behaviours that have already cost time here.
 
 ## Git workflow
 

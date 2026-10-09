@@ -16,6 +16,8 @@ export interface ContributionRecord {
   accountId: string;
   /** Display name for the account; falls back to the id when unnamed. */
   accountName: string;
+  /** Unique id of the activity (for drill-down). */
+  activityId: string;
 }
 
 export interface Bucket {
@@ -375,6 +377,62 @@ export function bucketizeByAccount(
   });
 
   return { accounts, buckets };
+}
+
+/** What a drill-down panel is showing. */
+export interface DrillDownSelection {
+  /** Period key the panel belongs to, at the current granularity. */
+  periodKey: string;
+  /** Account to restrict to; every account when omitted (the total view). */
+  accountId?: string;
+}
+
+/**
+ * Resolves the account behind a per-account series key.
+ *
+ * The stacked chart identifies accounts positionally (`s0`, `s1`, …) because the
+ * key has to be short and CSS-safe, so the series key is not the account id and
+ * the drill-down cannot filter on it directly.
+ *
+ * Returns `undefined` for an out-of-range key rather than `undefined` for the
+ * id: a caller that treats "no account id" as "the whole period" would list
+ * every account under this segment's name.
+ */
+export function resolveAccountFromSeriesKey(
+  accounts: AccountRef[],
+  dataKey: string,
+): AccountRef | undefined {
+  const match = /^s(\d+)$/.exec(dataKey);
+  if (!match) return undefined;
+  return accounts[Number.parseInt(match[1], 10)];
+}
+
+/**
+ * The deposits behind one bar of the chart.
+ *
+ * The selector owns the interval window rather than receiving an already-scoped
+ * list. Bucket keys are only as narrow as the granularity, so on a partially
+ * covered period — a `2025` bar under a one-year window that starts in October
+ * covers Oct-Dec only — a panel fed the unfiltered records would report the whole
+ * year and disagree with the bar, with `BarClickInfo.value` and with Total
+ * contributed.
+ *
+ * Taking the window as an argument rather than a pre-filtered list is what makes
+ * that mistake unexpressible. The scoping then lives in one place the tests
+ * cover. With a pre-filtered list the selector was never wrong on its own — only
+ * what it was handed — so reintroducing the bug left `npm test` green.
+ */
+export function selectDrillDownRecords(
+  records: ContributionRecord[],
+  window: DateWindow,
+  selection: DrillDownSelection,
+  granularity: Granularity,
+): ContributionRecord[] {
+  return filterByRange(records, window).filter((record) => {
+    if (periodKey(record.date, granularity) !== selection.periodKey) return false;
+    if (selection.accountId && record.accountId !== selection.accountId) return false;
+    return true;
+  });
 }
 
 export function formatMonthLabel(date: Date, locale = 'en'): string {

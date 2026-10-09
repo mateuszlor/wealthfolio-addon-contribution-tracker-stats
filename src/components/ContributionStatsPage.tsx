@@ -19,13 +19,16 @@ import {
 } from '@wealthfolio/ui';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
-import { ContributionChart, seriesColor, type ChartRow, type ChartSeries } from './ContributionChart';
+import { ContributionChart, seriesColor, type BarClickInfo, type ChartRow, type ChartSeries } from './ContributionChart';
 import { CustomRangeButton } from './CustomRangeButton';
+import { DrillDownPanel } from './DrillDownPanel';
 import {
   bucketize,
   bucketizeByAccount,
   fillGaps,
   filterByRange,
+  resolveAccountFromSeriesKey,
+  selectDrillDownRecords,
   summarize,
   type Granularity,
 } from '../lib/contributions';
@@ -81,6 +84,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
   const [customRange, setCustomRange] = React.useState<CustomRange | undefined>(undefined);
   const [seriesMode, setSeriesMode] = React.useState<SeriesMode>('total');
+  const [drillDown, setDrillDown] = React.useState<{
+    periodKey: string;
+    periodLabel: string;
+    accountId?: string;
+    accountName?: string;
+  } | null>(null);
 
   const currency = 'PLN';
 
@@ -140,7 +149,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       });
 
       const data: ChartRow[] = split.buckets.map((bucket) => {
-        const row: ChartRow = { label: bucket.label };
+        const row: ChartRow = { label: bucket.label, periodKey: bucket.key };
         split.accounts.forEach((account, index) => {
           row[`s${index}`] = bucket.values[account.id] ?? 0;
         });
@@ -151,7 +160,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     }
 
     return {
-      rows: buckets.map((bucket) => ({ label: bucket.label, total: bucket.total })),
+      rows: buckets.map((bucket) => ({ label: bucket.label, periodKey: bucket.key, total: bucket.total })),
       series: [
         {
           dataKey: 'total',
@@ -179,6 +188,60 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const handleRangeChange = React.useCallback((next: CustomRange | undefined) => {
     setCustomRange(next);
   }, []);
+
+  const handleBarClick = React.useCallback(
+    (info: BarClickInfo) => {
+      // In the per-account view the chart identifies accounts positionally, so
+      // the series key has to be resolved before it can be filtered on.
+      if (splitMode === 'account') {
+        const account = resolveAccountFromSeriesKey(split.accounts, info.dataKey);
+        // A missing entry must not fall through to "no account", which would
+        // list every account under this segment's name.
+        if (!account) return;
+
+        setDrillDown({
+          periodKey: info.periodKey,
+          periodLabel: info.periodLabel,
+          accountId: account.id,
+          accountName: account.name,
+        });
+        return;
+      }
+
+      setDrillDown({
+        periodKey: info.periodKey,
+        periodLabel: info.periodLabel,
+        accountId: info.accountId,
+        accountName: info.accountName,
+      });
+    },
+    [splitMode, split.accounts],
+  );
+
+  const handleDrillDownClose = React.useCallback(() => {
+    setDrillDown(null);
+  }, []);
+
+  // Anything that changes what the chart means invalidates an open panel:
+  // granularity rewrites the period keys, the interval rewrites the record set,
+  // and switching view changes which account the segment refers to.
+  React.useEffect(() => {
+    setDrillDown(null);
+  }, [granularity, window, splitMode]);
+
+  // The panel must list exactly the deposits the clicked bar is built from, so
+  // the selector applies the same window the chart was built from. It takes the
+  // window rather than an already-scoped list, so the two cannot drift apart and
+  // a test can cover the scoping instead of trusting this call site.
+  const drillDownRecords = React.useMemo(() => {
+    if (!drillDown) return [];
+    return selectDrillDownRecords(records, window, drillDown, granularity);
+  }, [drillDown, records, window, granularity]);
+
+  const drillDownTotal = React.useMemo(
+    () => drillDownRecords.reduce((sum, r) => sum + r.amount, 0),
+    [drillDownRecords],
+  );
 
   const rangeLabel =
     formatDate(window.from) && formatDate(window.to)
@@ -303,13 +366,27 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             {rows.length === 0 ? (
               <p className="text-muted-foreground text-sm">{t('noContributions')}</p>
             ) : (
-              <ContributionChart
-                rows={rows}
-                series={series}
-                formatValue={displayValue}
-                formatTick={formatTick}
-                hideAxis={amountsHidden}
-              />
+              <>
+                <ContributionChart
+                  rows={rows}
+                  series={series}
+                  formatValue={displayValue}
+                  formatTick={formatTick}
+                  hideAxis={amountsHidden}
+                  onBarClick={handleBarClick}
+                />
+                {drillDown && (
+                  <DrillDownPanel
+                    records={drillDownRecords}
+                    periodLabel={drillDown.periodLabel}
+                    accountName={drillDown.accountName}
+                    total={drillDownTotal}
+                    currency={currency}
+                    amountsHidden={amountsHidden}
+                    onClose={handleDrillDownClose}
+                  />
+                )}
+              </>
             )}
           </>
         )}

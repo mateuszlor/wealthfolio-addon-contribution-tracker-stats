@@ -28,6 +28,7 @@ export interface IntakeStats {
  * if the host returns either one.
  */
 export interface RawActivity {
+  id?: string | null;
   activityType?: string | null;
   activityTypeOverride?: string | null;
   date?: Date | string | null;
@@ -116,7 +117,13 @@ export function toContributionRecords(activities: unknown): Intake {
     }
 
     const account = readAccount(activity);
-    records.push({ date, amount, accountId: account.id, accountName: account.name });
+    records.push({
+      date,
+      amount,
+      accountId: account.id,
+      accountName: account.name,
+      activityId: typeof activity.id === 'string' ? activity.id : '',
+    });
   }
 
   records.sort((a, b) => a.date.getTime() - b.date.getTime());

@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# Rejects any push that would rewrite published history.
+#
+# Force pushing is not allowed in this repository: the remote branches are the
+# shared record of what was reviewed and released, and a non-fast-forward push
+# silently drops commits that someone may already have pulled or based work on.
+# `--force-with-lease` is a force push and is refused here too.
+#
+# If a rewrite is genuinely required, delete the remote branch first, as an
+# explicit act, rather than forcing over it.
+#
+# Not tracked by git (see `.git/hooks`), so the rule is also written down in
+# DEVELOPING.md.
+
+zero=0000000000000000000000000000000000000000
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  case "$local_sha" in
+    "$zero")
+      # An explicit deletion. This is the sanctioned way to rewrite history: the
+      # branch is removed on purpose rather than forced over.
+      continue
+      ;;
+  esac
+
+  case "$remote_sha" in
+    "$zero")
+      # Creating a new branch or tag: nothing to rewrite.
+      continue
+      ;;
+  esac
+
+  # Only ancestry is checked, so ordinary fast-forwards pass.
+  if git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    continue
+  fi
+
+  echo "pre-push: refusing to rewrite $_remote_ref" >&2
+  echo "" >&2
+  echo "  remote: $remote_sha" >&2
+  echo "  local:  $local_sha" >&2
+  echo "" >&2
+  echo "This push is not a fast-forward, so commits already on the remote would" >&2
+  echo "be discarded. Force pushing is not allowed here, including" >&2
+  echo "--force-with-lease." >&2
+  echo "" >&2
+  echo "To add more commits, commit on top of the remote tip. If the history" >&2
+  echo "really has to be rewritten, delete the remote branch explicitly first:" >&2
+  echo "" >&2
+  echo "  git push origin --delete $_remote_ref" >&2
+  echo "  git push -u origin $_local_ref" >&2
+  exit 1
+done
+
+exit 0

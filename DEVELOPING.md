@@ -3,6 +3,9 @@
 Audience: developers changing this addon. For what it does and how to install it, see
 [README.md](README.md).
 
+Every artifact states who produced it — commits, pull requests and comments alike. See
+[Attribution](#attribution).
+
 ## Requirements
 
 - Node.js >= 20 (CI covers 20.19 and 22)
@@ -36,6 +39,56 @@ a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
 | `npm run version` | Prints the current version |
 | `npm run version:check` | Asserts manifest and package versions agree |
 | `npm run version:bump` / `:minor` / `:major` | Bumps the version without packaging |
+
+## Attribution
+
+Every artifact names the agent and the specific model it came from. A reviewer has to be able
+to tell an agent's reasoning from the maintainer's, and behaviour differs enough between
+models that nobody can tell which one produced a given commit without being told.
+
+| Artifact | Marker |
+| --- | --- |
+| Commit | `Co-Authored-By: <agent> (<provider>/<model>) <email>` as the last trailer |
+| Pull request body | `— produced by <agent> · model <provider>/<model>` as the last line |
+| PR comment | same last line |
+| Reply to a review comment | same last line, quoting the comment it answers |
+
+The placeholders are replaced per artifact with the agent and model that actually produced it.
+No model name is fixed in this file, because different work comes from different models and a
+hardcoded one would go stale and start attributing commits to the wrong author.
+
+Never sign on the maintainer's behalf. Text drafted for them to send under their own name says
+so in the body instead.
+
+Agents work under `AGENTS.md`, which carries the same rule plus the git constraints and the
+host behaviours that have already cost time here.
+
+## Git workflow
+
+**Never force-push.** Not `git push --force`, and not `--force-with-lease` either — that is
+still a force push, it just checks the remote tip first.
+
+A published branch is the shared record of what was reviewed, released and based on by other
+work. A non-fast-forward push silently drops commits that someone may already have pulled,
+so history is only ever extended, never rewritten.
+
+Concretely:
+
+- Amend, rebase and squash **before** the branch is pushed, or not at all.
+- Once pushed, add follow-up commits. A fix becomes its own commit rather than an amend.
+- `git revert` is the way to undo something already pushed.
+- If a rewrite is genuinely unavoidable, delete the remote branch first — an explicit,
+  separate act — and push again. That is a decision for the maintainer, not a default.
+
+`.git/hooks/pre-push` enforces this locally: it refuses any ref whose remote tip is not an
+ancestor of the local commit. Hooks are not tracked by git, so after a fresh clone reinstall
+it:
+
+```sh
+cp docs/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+The copy lives in `docs/pre-push` for exactly that reason.
 
 ## Layout
 
@@ -335,6 +388,24 @@ you re-publish a stale build:
 ```bash
 git tag -d v1.0.1 && git tag -a v1.0.1 -m "v1.0.1"
 ```
+
+## Known limitations of the drill-down
+
+Tracked here rather than in a pull-request comment, so they are not lost when one closes.
+
+- **The drill-down is reachable by pointer only.** Recharts' bars are not focusable, so the
+  panel opens from hover and there is no keyboard route into it. The rows carry an
+  `aria-label` and focus moves to the panel's close button once it is open, which is as far as
+  this goes today.
+- **Focus is not returned when the panel closes.** The panel unmounts while its close button
+  holds focus, so focus falls back to `<body>` and a keyboard user restarts from the top of the
+  page. Returning it to the bar that opened the panel, or to the chart wrapper, is the natural
+  fix and would also be where a keyboard user lands once the drill-down itself becomes reachable.
+- **The column highlight is measured once per hover.** `plotArea` is read on `onMouseEnter`, so
+  a resize while the pointer stays on the bar — a window resize, the sidebar collapsing — leaves
+  the highlight in stale coordinates until the pointer leaves and re-enters. Cosmetic.
+  Re-measuring from the wrapper's `ResizeObserver`, or storing only the segment geometry and
+  deriving `top`/`height` in a layout effect keyed on `hover`, would fix it.
 
 ## Testing
 

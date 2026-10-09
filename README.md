@@ -54,12 +54,25 @@ year over year. Segments are ordered by total contribution and colours follow th
 theme. Accounts without a name, or without deposits in a given period, are handled without
 leaving gaps.
 
+### Looking at the deposits behind a bar
+
+Hover a bar to see the period's total, and click it to open the individual deposits that
+make it up: date, account and amount per entry, newest first. In *Per account* view, hover
+a stacked bar to get one row per account, and click the row you are interested in to see
+only that account's deposits. The panel appears below the chart and closes with the
+**×** button.
+
+The panel lists exactly the deposits the bar is built from, so its total always matches
+the bar — including for a period that the selected interval only partly covers, such as
+the first year under a *1Y* range.
+
 ### Privacy
 
-The eye button in the top-right corner hides the amounts: every amount in the summary and
-in the tooltip turns into a fixed `••••`, and the value axis disappears. The bars stay, so
-you can still read the *shape* of your contributions without seeing a single number — not
-even the order of magnitude, which a partially masked value would still give away.
+The eye button in the top-right corner hides the amounts: every amount in the summary, in
+the tooltip and in the drill-down panel turns into a fixed `••••`, and the value axis
+disappears. The bars stay, so you can still read the *shape* of your contributions without
+seeing a single number — not even the order of magnitude, which a partially masked value
+would still give away.
 
 The choice is remembered for this add-on, so it survives a reload, and it is removed
 together with the add-on. It is deliberately **not** Wealthfolio's own privacy toggle:

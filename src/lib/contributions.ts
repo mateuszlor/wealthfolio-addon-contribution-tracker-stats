@@ -16,6 +16,8 @@ export interface ContributionRecord {
   accountId: string;
   /** Display name for the account; falls back to the id when unnamed. */
   accountName: string;
+  /** Unique id of the activity (for drill-down). */
+  activityId: string;
 }
 
 export interface Bucket {
@@ -375,6 +377,60 @@ export function bucketizeByAccount(
   });
 
   return { accounts, buckets };
+}
+
+/** What a drill-down panel is showing. */
+export interface DrillDownSelection {
+  /** Period key the panel belongs to, at the current granularity. */
+  periodKey: string;
+  /** Account to restrict to; every account when omitted (the total view). */
+  accountId?: string;
+}
+
+/**
+ * Resolves the account behind a per-account series key.
+ *
+ * The stacked chart identifies accounts positionally (`s0`, `s1`, …) because the
+ * key has to be short and CSS-safe, so the series key is not the account id and
+ * the drill-down cannot filter on it directly.
+ *
+ * Returns `undefined` for an out-of-range key rather than `undefined` for the
+ * id: a caller that treats "no account id" as "the whole period" would list
+ * every account under this segment's name.
+ */
+export function resolveAccountFromSeriesKey(
+  accounts: AccountRef[],
+  dataKey: string,
+): AccountRef | undefined {
+  const match = /^s(\d+)$/.exec(dataKey);
+  if (!match) return undefined;
+  return accounts[Number.parseInt(match[1], 10)];
+}
+
+/**
+ * The deposits behind one bar of the chart.
+ *
+ * `records` must be the same set the chart was built from — the records already
+ * narrowed to the selected interval. Handing it the unfiltered list makes the
+ * panel disagree with the bar on any partially covered period: bucket keys are
+ * only as narrow as the granularity, so a `2025` bar under a one-year window that
+ * starts in October covers October to December only, while filtering the full
+ * list returns the whole year.
+ *
+ * This is the selector behind the drill-down panel, kept here rather than in the
+ * page component so the two cases that were wrong during development — the
+ * unscoped list and the `s0`-style series key — stay pinned by tests.
+ */
+export function selectDrillDownRecords(
+  records: ContributionRecord[],
+  selection: DrillDownSelection,
+  granularity: Granularity,
+): ContributionRecord[] {
+  return records.filter((record) => {
+    if (periodKey(record.date, granularity) !== selection.periodKey) return false;
+    if (selection.accountId && record.accountId !== selection.accountId) return false;
+    return true;
+  });
 }
 
 export function formatMonthLabel(date: Date, locale = 'en'): string {

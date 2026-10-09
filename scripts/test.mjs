@@ -556,8 +556,91 @@ test('the interval window and the bucket granularity compose', () => {
   );
 });
 
-/* --------------------------------------------------------------------- run */
+/* ------------------------------------------------------- drill-down panel */
 
+test('the drill-down lists every deposit behind the bar', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 50),
+    record('2026-02-02T00:00:00Z', 70),
+  ];
+
+  const january = contributions.selectDrillDownRecords(records, { periodKey: '2026-01' }, 'month');
+
+  assert.equal(january.length, 2);
+  assert.equal(january.reduce((sum, r) => sum + r.amount, 0), 150);
+});
+
+test('the drill-down narrows to one account in the per-account view', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'acc-1', 'Main'),
+    record('2026-01-06T00:00:00Z', 200, 'acc-2', 'Pension'),
+    record('2026-01-07T00:00:00Z', 300, 'acc-1', 'Main'),
+  ];
+
+  const pension = contributions.selectDrillDownRecords(
+    records,
+    { periodKey: '2026-01', accountId: 'acc-2' },
+    'month',
+  );
+
+  assert.equal(pension.length, 1);
+  assert.equal(pension[0].amount, 200);
+});
+
+test('the drill-down total always equals the bar it belongs to', () => {
+  // A one-year window that starts in October makes the `2025` bar cover
+  // Oct-Dec only, so a panel built from the unfiltered records would report the
+  // whole year. This pins both halves: the panel agrees with the bar when it is
+  // fed the scoped set, and the scoped set is genuinely not the full set.
+  const all = [
+    record('2025-10-15T00:00:00Z', 100),
+    record('2025-12-01T00:00:00Z', 200),
+    record('2025-03-01T00:00:00Z', 999), // outside the window
+  ];
+
+  // What the chart is built from: only what the interval selector left.
+  const scoped = contributions.filterByRange(all, { from: new Date('2025-10-09T00:00:00Z') });
+
+  const bar = contributions.bucketize(scoped, 'year', 'en')[0];
+  const shown = contributions.selectDrillDownRecords(scoped, { periodKey: bar.key }, 'year');
+
+  assert.equal(scoped.length, 2, 'the scoped set must exclude the out-of-window deposit');
+  assert.equal(bar.total, 300);
+  assert.equal(shown.reduce((sum, r) => sum + r.amount, 0), bar.total);
+
+  // And the mistake the panel used to make: the same selection over everything.
+  const unscoped = contributions.selectDrillDownRecords(all, { periodKey: bar.key }, 'year');
+  assert.equal(unscoped.reduce((sum, r) => sum + r.amount, 0), 1299);
+});
+
+test('the drill-down is empty for a period with no deposits', () => {
+  const records = [record('2026-01-05T00:00:00Z', 100)];
+
+  assert.deepEqual(
+    contributions.selectDrillDownRecords(records, { periodKey: '2026-03' }, 'month'),
+    [],
+  );
+});
+
+test('a series key resolves to the account behind it', () => {
+  const accounts = [
+    { id: 'acc-1', name: 'Main' },
+    { id: 'acc-2', name: 'Pension' },
+  ];
+
+  assert.deepEqual(contributions.resolveAccountFromSeriesKey(accounts, 's0'), accounts[0]);
+  assert.deepEqual(contributions.resolveAccountFromSeriesKey(accounts, 's1'), accounts[1]);
+});
+
+test('an out-of-range series key resolves to nothing, not to "every account"', () => {
+  const accounts = [{ id: 'acc-1', name: 'Main' }];
+
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 's7'), undefined);
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'total'), undefined);
+});
+
+/* --------------------------------------------------------------------- run */
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

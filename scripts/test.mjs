@@ -558,6 +558,8 @@ test('the interval window and the bucket granularity compose', () => {
 
 /* ------------------------------------------------------- drill-down panel */
 
+const OPEN = { from: undefined, to: undefined };
+
 test('the drill-down lists every deposit behind the bar', () => {
   const records = [
     record('2026-01-05T00:00:00Z', 100),
@@ -565,7 +567,12 @@ test('the drill-down lists every deposit behind the bar', () => {
     record('2026-02-02T00:00:00Z', 70),
   ];
 
-  const january = contributions.selectDrillDownRecords(records, { periodKey: '2026-01' }, 'month');
+  const january = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+  );
 
   assert.equal(january.length, 2);
   assert.equal(january.reduce((sum, r) => sum + r.amount, 0), 150);
@@ -580,6 +587,7 @@ test('the drill-down narrows to one account in the per-account view', () => {
 
   const pension = contributions.selectDrillDownRecords(
     records,
+    OPEN,
     { periodKey: '2026-01', accountId: 'acc-2' },
     'month',
   );
@@ -588,37 +596,56 @@ test('the drill-down narrows to one account in the per-account view', () => {
   assert.equal(pension[0].amount, 200);
 });
 
-test('the drill-down total always equals the bar it belongs to', () => {
-  // A one-year window that starts in October makes the `2025` bar cover
-  // Oct-Dec only, so a panel built from the unfiltered records would report the
-  // whole year. This pins both halves: the panel agrees with the bar when it is
-  // fed the scoped set, and the scoped set is genuinely not the full set.
+test('the drill-down applies the interval window itself', () => {
+  // The selector owns the window rather than taking a pre-scoped list, so the
+  // scoping is covered here instead of at a call site no test can reach. Reverting
+  // the call to pass unscoped records used to leave this suite green.
   const all = [
     record('2025-10-15T00:00:00Z', 100),
     record('2025-12-01T00:00:00Z', 200),
     record('2025-03-01T00:00:00Z', 999), // outside the window
   ];
 
-  // What the chart is built from: only what the interval selector left.
-  const scoped = contributions.filterByRange(all, { from: new Date('2025-10-09T00:00:00Z') });
+  const window = { from: new Date('2025-10-09T00:00:00Z') };
+  const bar = contributions.bucketize(
+    contributions.filterByRange(all, window),
+    'year',
+    'en',
+  )[0];
 
-  const bar = contributions.bucketize(scoped, 'year', 'en')[0];
-  const shown = contributions.selectDrillDownRecords(scoped, { periodKey: bar.key }, 'year');
+  const shown = contributions.selectDrillDownRecords(all, window, { periodKey: bar.key }, 'year');
 
-  assert.equal(scoped.length, 2, 'the scoped set must exclude the out-of-window deposit');
+  // The bar covers Oct-Dec only, so the panel has to agree with it.
   assert.equal(bar.total, 300);
   assert.equal(shown.reduce((sum, r) => sum + r.amount, 0), bar.total);
 
-  // And the mistake the panel used to make: the same selection over everything.
-  const unscoped = contributions.selectDrillDownRecords(all, { periodKey: bar.key }, 'year');
+  // And the mistake the panel used to make, now asserted rather than assumed.
+  const unscoped = contributions.selectDrillDownRecords(all, OPEN, { periodKey: bar.key }, 'year');
   assert.equal(unscoped.reduce((sum, r) => sum + r.amount, 0), 1299);
+});
+
+test('the drill-down window narrows within a single period', () => {
+  const records = [
+    record('2026-01-10T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 250),
+  ];
+
+  const inside = contributions.selectDrillDownRecords(
+    records,
+    { from: new Date('2026-01-15T00:00:00Z') },
+    { periodKey: '2026-01' },
+    'month',
+  );
+
+  assert.equal(inside.length, 1);
+  assert.equal(inside[0].amount, 250);
 });
 
 test('the drill-down is empty for a period with no deposits', () => {
   const records = [record('2026-01-05T00:00:00Z', 100)];
 
   assert.deepEqual(
-    contributions.selectDrillDownRecords(records, { periodKey: '2026-03' }, 'month'),
+    contributions.selectDrillDownRecords(records, OPEN, { periodKey: '2026-03' }, 'month'),
     [],
   );
 });

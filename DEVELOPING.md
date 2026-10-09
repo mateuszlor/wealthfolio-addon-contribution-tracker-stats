@@ -389,6 +389,24 @@ you re-publish a stale build:
 git tag -d v1.0.1 && git tag -a v1.0.1 -m "v1.0.1"
 ```
 
+## Known limitations of the drill-down
+
+Tracked here rather than in a pull-request comment, so they are not lost when one closes.
+
+- **The drill-down is reachable by pointer only.** Recharts' bars are not focusable, so the
+  panel opens from hover and there is no keyboard route into it. The rows carry an
+  `aria-label` and focus moves to the panel's close button once it is open, which is as far as
+  this goes today.
+- **Focus is not returned when the panel closes.** The panel unmounts while its close button
+  holds focus, so focus falls back to `<body>` and a keyboard user restarts from the top of the
+  page. Returning it to the bar that opened the panel, or to the chart wrapper, is the natural
+  fix and would also be where a keyboard user lands once the drill-down itself becomes reachable.
+- **The column highlight is measured once per hover.** `plotArea` is read on `onMouseEnter`, so
+  a resize while the pointer stays on the bar — a window resize, the sidebar collapsing — leaves
+  the highlight in stale coordinates until the pointer leaves and re-enters. Cosmetic.
+  Re-measuring from the wrapper's `ResizeObserver`, or storing only the segment geometry and
+  deriving `top`/`height` in a layout effect keyed on `hover`, would fix it.
+
 ## Testing
 
 `npm test` transpiles the pure modules with esbuild and asserts behaviour with

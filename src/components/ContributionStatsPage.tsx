@@ -230,14 +230,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   }, [granularity, window, splitMode]);
 
   // The panel must list exactly the deposits the clicked bar is built from, so
-  // it filters the same `scoped` set the chart uses. Filtering the unfiltered
-  // `records` would pull in deposits outside the selected range on any partially
-  // covered period — at Year granularity the `2025` bar under a 1Y window covers
-  // Oct-Dec only, and the panel would then disagree with the bar it belongs to.
+  // the selector applies the same window the chart was built from. It takes the
+  // window rather than an already-scoped list, so the two cannot drift apart and
+  // a test can cover the scoping instead of trusting this call site.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(scoped, drillDown, granularity);
-  }, [drillDown, scoped, granularity]);
+    return selectDrillDownRecords(records, window, drillDown, granularity);
+  }, [drillDown, records, window, granularity]);
 
   const drillDownTotal = React.useMemo(
     () => drillDownRecords.reduce((sum, r) => sum + r.amount, 0),

@@ -410,23 +410,25 @@ export function resolveAccountFromSeriesKey(
 /**
  * The deposits behind one bar of the chart.
  *
- * `records` must be the same set the chart was built from — the records already
- * narrowed to the selected interval. Handing it the unfiltered list makes the
- * panel disagree with the bar on any partially covered period: bucket keys are
- * only as narrow as the granularity, so a `2025` bar under a one-year window that
- * starts in October covers October to December only, while filtering the full
- * list returns the whole year.
+ * The selector owns the interval window rather than receiving an already-scoped
+ * list. Bucket keys are only as narrow as the granularity, so on a partially
+ * covered period — a `2025` bar under a one-year window that starts in October
+ * covers Oct-Dec only — a panel fed the unfiltered records would report the whole
+ * year and disagree with the bar, with `BarClickInfo.value` and with Total
+ * contributed.
  *
- * This is the selector behind the drill-down panel, kept here rather than in the
- * page component so the two cases that were wrong during development — the
- * unscoped list and the `s0`-style series key — stay pinned by tests.
+ * Taking the window as an argument rather than a pre-filtered list is what makes
+ * that mistake unexpressible. The scoping then lives in one place the tests
+ * cover. With a pre-filtered list the selector was never wrong on its own — only
+ * what it was handed — so reintroducing the bug left `npm test` green.
  */
 export function selectDrillDownRecords(
   records: ContributionRecord[],
+  window: DateWindow,
   selection: DrillDownSelection,
   granularity: Granularity,
 ): ContributionRecord[] {
-  return records.filter((record) => {
+  return filterByRange(records, window).filter((record) => {
     if (periodKey(record.date, granularity) !== selection.periodKey) return false;
     if (selection.accountId && record.accountId !== selection.accountId) return false;
     return true;

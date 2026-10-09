@@ -10,8 +10,10 @@ export type Granularity = 'month' | 'day' | 'year';
 export interface ContributionRecord {
   /** Moment the contribution was recorded. */
   date: Date;
-  /** Positive contribution amount, in the base currency. */
+  /** Positive contribution amount, in the record's own currency. */
   amount: number;
+  /** ISO currency code the host recorded the amount in. */
+  currency: string;
   /** Account the deposit was recorded against. */
   accountId: string;
   /** Display name for the account; falls back to the id when unnamed. */

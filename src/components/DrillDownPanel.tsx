@@ -2,12 +2,12 @@ import React from 'react';
 import { useAddonTranslation } from '@wealthfolio/addon-sdk';
 import {
   AmountDisplay,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Icons,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
   useAmountFormatting,
   useDateFormatting,
 } from '@wealthfolio/ui';
@@ -15,6 +15,10 @@ import { maskAmount } from '../lib/privacy';
 import type { ContributionRecord } from '../lib/contributions';
 
 export interface DrillDownPanelProps {
+  /** Whether the sheet is open (a bar or tooltip row is selected). */
+  open: boolean;
+  /** Fired on close (overlay click, escape, or the close button). */
+  onOpenChange: (open: boolean) => void;
   /** Records for the selected period and account. */
   records: ContributionRecord[];
   /** The period label (e.g., "Jan 2026"). */
@@ -27,30 +31,30 @@ export interface DrillDownPanelProps {
   currency: string;
   /** Whether amounts are hidden. */
   amountsHidden: boolean;
-  /** Called when the panel should close. */
-  onClose: () => void;
 }
 
+/**
+ * Drill-down as a `Sheet`, the same primitive the performance attribution and
+ * the spending transaction panels open. The previous inline card pushed the
+ * chart down when a bar was clicked, which also scrolled the clicked bar out
+ * of view on short screens; an overlay has neither problem.
+ *
+ * Focus moves into the dialog automatically (Radix traps it on open), so the
+ * manual focus-to-close-button hack the card needed is gone.
+ */
 export function DrillDownPanel({
+  open,
+  onOpenChange,
   records,
   periodLabel,
   accountName,
   total,
   currency,
   amountsHidden,
-  onClose,
 }: DrillDownPanelProps) {
   const { t } = useAddonTranslation();
   const { formatAmount: formatHostAmount } = useAmountFormatting();
   const { formatDate: formatHostDate } = useDateFormatting();
-  const closeRef = React.useRef<HTMLButtonElement>(null);
-
-  // The panel opens from a pointer on a bar, and recharts' bars are not
-  // focusable, so nothing in the flow would otherwise announce it or let the
-  // keyboard user leave. Moving focus to the close button puts them inside.
-  React.useEffect(() => {
-    closeRef.current?.focus();
-  }, []);
 
   const formatDate = React.useCallback(
     (value: Date) =>
@@ -75,37 +79,28 @@ export function DrillDownPanel({
   );
 
   return (
-    <Card className="w-full">
-      <CardHeader className="flex flex-row items-center justify-between border-b pb-3">
-        <CardTitle className="text-base font-medium">{title}</CardTitle>
-        <Button
-          ref={closeRef}
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onClose}
-          aria-label={t('close')}
-        >
-          <Icons.X className="h-4 w-4" />
-        </Button>
-      </CardHeader>
-      <CardContent className="pt-2">
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <span className="text-sm text-muted-foreground">
-            {t('transactionCount', { count: records.length })}
-          </span>
-          <span className="tabular-nums text-base font-semibold">
-            <AmountDisplay value={total} currency={currency} isHidden={amountsHidden} />
-          </span>
-        </div>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      {/* End side, like the attribution sheet; on small screens it becomes a
+          bottom sheet through the host's own responsive variants. */}
+      <SheetContent side="right" className="flex w-full flex-col gap-0 sm:max-w-md">
+        <SheetHeader className="border-b pb-3">
+          <SheetTitle className="text-base font-medium">{title}</SheetTitle>
+          <SheetDescription className="flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">
+              {t('transactionCount', { count: records.length })}
+            </span>
+            <span className="tabular-nums font-semibold">
+              <AmountDisplay value={total} currency={currency} isHidden={amountsHidden} />
+            </span>
+          </SheetDescription>
+        </SheetHeader>
 
         {ordered.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             {t('noTransactionsInPeriod')}
           </p>
         ) : (
-          <ul className="max-h-64 space-y-2 overflow-y-auto">
+          <ul className="flex-1 space-y-2 overflow-y-auto p-4">
             {ordered.map((record, index) => (
               <li
                 // `activityId` is empty when the host omits it, and two deposits
@@ -129,7 +124,7 @@ export function DrillDownPanel({
             ))}
           </ul>
         )}
-      </CardContent>
-    </Card>
+      </SheetContent>
+    </Sheet>
   );
 }

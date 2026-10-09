@@ -386,6 +386,12 @@ export function ContributionChart({
               key={item.dataKey}
               dataKey={item.dataKey}
               name={item.label}
+              // The addon mounts inside a sandboxed iframe where the
+              // ResponsiveContainer can measure while its parent is still laid
+              // out; the grow-in animation then starts from a zero-height
+              // container and recharts logs `width(-1) height(-1)`. Bars are
+              // data, not decoration, so they appear without transition.
+              isAnimationActive={false}
               stackId={stacked ? 'contributions' : undefined}
               fill={`var(--color-${item.dataKey})`}
               // Only the topmost segment gets rounded corners, otherwise stacked

@@ -38,6 +38,9 @@ export const translations: Record<string, AddonTranslationBundle> = {
     transactionCount_other: '{{count}} transactions',
     noTransactionsInPeriod: 'No transactions in this period.',
     close: 'Close',
+    previousMonth: 'Previous month',
+    nextMonth: 'Next month',
+    chooseMonth: 'Choose month',
   },
   pl: {
     title: 'Statystyki wpłat',
@@ -74,5 +77,8 @@ export const translations: Record<string, AddonTranslationBundle> = {
     transactionCount_other: '{{count}} transakcji',
     noTransactionsInPeriod: 'Brak transakcji w tym okresie.',
     close: 'Zamknij',
+    previousMonth: 'Poprzedni miesiąc',
+    nextMonth: 'Następny miesiąc',
+    chooseMonth: 'Wybierz miesiąc',
   },
 };

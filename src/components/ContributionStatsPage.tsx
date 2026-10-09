@@ -12,16 +12,15 @@ import {
   TabsTrigger,
   ToggleGroup,
   ToggleGroupItem,
-  getInitialIntervalData,
   useAmountFormatting,
   useDateFormatting,
-  type TimePeriod,
 } from '@wealthfolio/ui';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
+import { usePersistedWindow } from '../hooks/usePersistedWindow';
 import { ContributionChart, seriesColor, type BarClickInfo, type ChartRow, type ChartSeries } from './ContributionChart';
-import { CustomRangeButton } from './CustomRangeButton';
 import { DrillDownPanel } from './DrillDownPanel';
+import { MonthSwitcher } from './MonthSwitcher';
 import {
   bucketize,
   bucketizeByAccount,
@@ -42,11 +41,15 @@ const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
 type SeriesMode = 'total' | 'account';
 
-const STORAGE_KEY = 'contribution-tracker-stats.interval';
+/** Labels the hero, matching the spending reports' small caps. */
+const HERO_LABEL_CLASS =
+  'text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70';
 
-const EMPTY_RANGE: CustomRange = { from: undefined, to: undefined };
-
-type CustomRange = { from: Date | undefined; to: Date | undefined };
+/** This month, `YYYY-MM` — the month switcher's landing selection. */
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
 
 /**
  * Number, currency and date formatting is the host's, not the addon's: the built-in
@@ -73,16 +76,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // and the host has no privacy bridge for add-ons yet.
   const { hidden: amountsHidden, toggle: toggleAmountsHidden } = useHiddenAmounts(ctx);
 
+  // The visible window, following the spending pages: an interval preset or
+  // one concrete month. Persisted in the same bridge as the privacy toggle.
+  const { selection, range, setInterval, setMonth } = usePersistedWindow(ctx);
+
   // `locale` only labels the buckets now; amounts and dates come from the host
   // formatters above. Regional aliases are already normalised by the SDK.
   const locale = language || 'en';
   const { loading, error, records, granularity, setGranularity } = useContributions(ctx, locale);
 
-  const [interval, setInterval] = React.useState<TimePeriod>('1Y');
-  const [range, setRange] = React.useState<CustomRange>(
-    () => getInitialIntervalData('1Y').range ?? EMPTY_RANGE,
-  );
-  const [customRange, setCustomRange] = React.useState<CustomRange | undefined>(undefined);
   const [seriesMode, setSeriesMode] = React.useState<SeriesMode>('total');
   const [drillDown, setDrillDown] = React.useState<{
     periodKey: string;
@@ -91,7 +93,49 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     accountName?: string;
   } | null>(null);
 
-  const currency = 'PLN';
+  /**
+   * Deposits can be denominated in several currencies, and a total that adds
+   * PLN to EUR is a number with no meaning. When every record shares one
+   * currency the selector stays hidden; otherwise it narrows the whole page —
+   * stats, chart and drill-down — to the chosen one, defaulting to the largest
+   * contributor so the page still opens on the dominant currency.
+   */
+  const currencies = React.useMemo(
+    () => Array.from(new Set(records.map((record) => record.currency))).sort(),
+    [records],
+  );
+
+  const autoCurrency = React.useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const record of records) {
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.amount);
+    }
+    const best = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0];
+    return best?.[0] ?? 'PLN';
+  }, [records]);
+
+  const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
+  const currency = currencyChoice ?? autoCurrency;
+
+  const currencyRecords = React.useMemo(
+    () => records.filter((record) => record.currency === currency),
+    [records, currency],
+  );
+
+  // The earliest month with a deposit in this currency, bounding the month
+  // switcher's back chevron.
+  const minMonth = React.useMemo(() => {
+    if (currencyRecords.length === 0) return undefined;
+    const first = currencyRecords[0].date; // intake keeps records chronological
+    return `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}`;
+  }, [currencyRecords]);
+
+  // A month window is a single bucket at month granularity; browsing months in
+  // day or year granularity would make the chart meaningless, so month mode
+  // pins the aggregation like the spending pages pin theirs.
+  React.useEffect(() => {
+    if (selection.kind === 'month') setGranularity('month');
+  }, [selection.kind, setGranularity]);
 
   // The host formatters replace hand-rolled `Intl` calls: currency-aware fraction
   // digits, the application's own separators and the `formatCompactAmount` shape
@@ -120,11 +164,10 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [formatAmount, currency, amountsHidden],
   );
 
-  // The interval selector and the calendar share one window; a custom range wins
-  // until an interval pill is picked again.
-  const window = customRange ?? range;
-
-  const scoped = React.useMemo(() => filterByRange(records, window), [records, window]);
+  const scoped = React.useMemo(
+    () => filterByRange(currencyRecords, range),
+    [currencyRecords, range],
+  );
   const stats = React.useMemo(() => summarize(scoped), [scoped]);
   const buckets = React.useMemo(
     () => fillGaps(bucketize(scoped, granularity, locale), granularity, locale),
@@ -176,19 +219,6 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     if (!canSplit && seriesMode === 'account') setSeriesMode('total');
   }, [canSplit, seriesMode]);
 
-  const handleIntervalSelect = React.useCallback(
-    (code: TimePeriod, _description: string, next: CustomRange | undefined) => {
-      setInterval(code);
-      setRange(next ?? EMPTY_RANGE);
-      setCustomRange(undefined);
-    },
-    [],
-  );
-
-  const handleRangeChange = React.useCallback((next: CustomRange | undefined) => {
-    setCustomRange(next);
-  }, []);
-
   const handleBarClick = React.useCallback(
     (info: BarClickInfo) => {
       // In the per-account view the chart identifies accounts positionally, so
@@ -218,16 +248,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [splitMode, split.accounts],
   );
 
-  const handleDrillDownClose = React.useCallback(() => {
-    setDrillDown(null);
-  }, []);
-
   // Anything that changes what the chart means invalidates an open panel:
-  // granularity rewrites the period keys, the interval rewrites the record set,
-  // and switching view changes which account the segment refers to.
+  // granularity rewrites the period keys, the range rewrites the record set,
+  // switching view changes which account the segment refers to, and a currency
+  // switch swaps the whole record set.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, window, splitMode]);
+  }, [granularity, range, splitMode, currency]);
 
   // The panel must list exactly the deposits the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the
@@ -235,8 +262,8 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // a test can cover the scoping instead of trusting this call site.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(records, window, drillDown, granularity);
-  }, [drillDown, records, window, granularity]);
+    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity);
+  }, [drillDown, currencyRecords, range, granularity]);
 
   const drillDownTotal = React.useMemo(
     () => drillDownRecords.reduce((sum, r) => sum + r.amount, 0),
@@ -244,21 +271,22 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
 
   const rangeLabel =
-    formatDate(window.from) && formatDate(window.to)
-      ? `${formatDate(window.from)} – ${formatDate(window.to)}`
+    formatDate(range.from) && formatDate(range.to)
+      ? `${formatDate(range.from)} – ${formatDate(range.to)}`
       : t('allTime');
 
   return (
-    <div className="cts-root flex flex-col gap-4">
-      <section className="flex flex-col gap-4 rounded-xl border p-4">
+    // Page margins are the addon's to own: the host mounts the route content
+    // flush against the viewport, while the built-in pages pad their own
+    // shells. Matches the spending page's rhythm (and clears its bottom bar).
+    <div className="cts-root flex flex-col gap-4 p-4 pb-24 md:p-6 md:pb-24">
+      <section className="rounded-xl border bg-card p-4 shadow-xs md:p-5">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs tracking-wide text-muted-foreground uppercase">
-              {t('totalContributions')}
-            </p>
+            <p className={HERO_LABEL_CLASS}>{t('totalContributions')}</p>
             {/* The host mask is shorter than a real total, so the slot keeps a
                 minimum width and toggling does not shift the block. */}
-            <p className="tabular-nums min-w-[9ch] text-3xl font-semibold">
+            <p className="tabular-nums min-w-[9ch] text-3xl font-bold">
               <AmountDisplay value={stats.total} currency={currency} isHidden={amountsHidden} />
             </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
@@ -267,17 +295,17 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           <div className="flex items-start gap-4">
             <dl className="flex gap-6 text-right">
               <div>
-                <dt className="text-xs text-muted-foreground">{t('contributionCount')}</dt>
+                <dt className={HERO_LABEL_CLASS}>{t('contributionCount')}</dt>
                 <dd className="tabular-nums font-semibold">{stats.count}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">{t('averagePerDeposit')}</dt>
+                <dt className={HERO_LABEL_CLASS}>{t('averagePerDeposit')}</dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay value={stats.average} currency={currency} isHidden={amountsHidden} />
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">{t('averageMonthly')}</dt>
+                <dt className={HERO_LABEL_CLASS}>{t('averageMonthly')}</dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay
                     value={stats.monthlyAverage}
@@ -316,39 +344,69 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         )}
 
         {loading && !error && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
+      </section>
 
-        {!loading && !error && (
-          <>
-            {/* Same interval mechanism as the spending reports: preset pills plus
-                the custom calendar range. */}
-            <div className="flex items-center gap-2">
-              <IntervalSelector
-                value={interval}
-                onIntervalSelect={handleIntervalSelect}
-                storageKey={STORAGE_KEY}
+      {!loading && !error && (
+        <section className="rounded-xl border bg-card p-4 shadow-xs md:p-5">
+          {/* Spending-style period controls: the same interval pills, plus a
+              month switcher with chevrons and a month grid instead of a
+              day-level calendar. Picking a month overrides the preset. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <IntervalSelector
+              value={selection.kind === 'interval' ? selection.code : undefined}
+              onIntervalSelect={setInterval}
+            />
+            {minMonth && (
+              <MonthSwitcher
+                value={
+                  selection.kind === 'month'
+                    ? selection.key
+                    : currentMonthKey()
+                }
+                onChange={setMonth}
+                minMonth={minMonth}
+                locale={locale}
               />
-              <CustomRangeButton value={customRange} onApply={handleRangeChange} />
-            </div>
+            )}
+          </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Tabs
-                value={granularity}
-                onValueChange={(value) => setGranularity(value as Granularity)}
-              >
-                <TabsList>
-                  {GRANULARITIES.map((value) => (
-                    <TabsTrigger key={value} value={value}>
-                      {t(value)}
-                    </TabsTrigger>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={granularity}
+              onValueChange={(value) => setGranularity(value as Granularity)}
+            >
+              <TabsList>
+                {GRANULARITIES.map((value) => (
+                  <TabsTrigger key={value} value={value}>
+                    {t(value)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {currencies.length > 1 && (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  value={currency}
+                  onValueChange={(value) => {
+                    if (value) setCurrencyChoice(value);
+                  }}
+                >
+                  {currencies.map((code) => (
+                    <ToggleGroupItem key={code} value={code} variant="outline" aria-label={code}>
+                      {code}
+                    </ToggleGroupItem>
                   ))}
-                </TabsList>
-              </Tabs>
+                </ToggleGroup>
+              )}
 
               {canSplit && (
                 <ToggleGroup
                   type="single"
                   size="sm"
-                  value={seriesMode}
+                  value={splitMode}
                   onValueChange={(value) => {
                     if (value) setSeriesMode(value as SeriesMode);
                   }}
@@ -362,35 +420,37 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 </ToggleGroup>
               )}
             </div>
+          </div>
 
-            {rows.length === 0 ? (
-              <p className="text-muted-foreground text-sm">{t('noContributions')}</p>
-            ) : (
-              <>
-                <ContributionChart
-                  rows={rows}
-                  series={series}
-                  formatValue={displayValue}
-                  formatTick={formatTick}
-                  hideAxis={amountsHidden}
-                  onBarClick={handleBarClick}
-                />
-                {drillDown && (
-                  <DrillDownPanel
-                    records={drillDownRecords}
-                    periodLabel={drillDown.periodLabel}
-                    accountName={drillDown.accountName}
-                    total={drillDownTotal}
-                    currency={currency}
-                    amountsHidden={amountsHidden}
-                    onClose={handleDrillDownClose}
-                  />
-                )}
-              </>
-            )}
-          </>
-        )}
-      </section>
+          {rows.length === 0 ? (
+            <p className="mt-4 text-muted-foreground text-sm">{t('noContributions')}</p>
+          ) : (
+            <div className="mt-4">
+              <ContributionChart
+                rows={rows}
+                series={series}
+                formatValue={displayValue}
+                formatTick={formatTick}
+                hideAxis={amountsHidden}
+                onBarClick={handleBarClick}
+              />
+            </div>
+          )}
+        </section>
+      )}
+
+      <DrillDownPanel
+        open={drillDown !== null}
+        onOpenChange={(open) => {
+          if (!open) setDrillDown(null);
+        }}
+        records={drillDownRecords}
+        periodLabel={drillDown?.periodLabel ?? ''}
+        accountName={drillDown?.accountName}
+        total={drillDownTotal}
+        currency={currency}
+        amountsHidden={amountsHidden}
+      />
     </div>
   );
 }

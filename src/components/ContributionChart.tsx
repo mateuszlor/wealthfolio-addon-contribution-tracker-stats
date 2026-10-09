@@ -119,6 +119,8 @@ interface HoverState {
   width: number;
   /** Top y of the hovered segment, in chart pixels. */
   y: number;
+  /** The plot area, relative to the chart container, for the column highlight. */
+  plot: { top: number; height: number };
 }
 
 /**
@@ -297,7 +299,7 @@ export function ContributionChart({
   }, [anchor, hover, series.length, rows.length]);
 
   /** Column geometry as recharts reports it on the mouse events. */
-  const geometry = (entry: unknown): Omit<HoverState, 'row'> | undefined => {
+  const geometry = (entry: unknown): Omit<HoverState, 'row' | 'plot'> | undefined => {
     const box = entry as { x?: number; y?: number; width?: number } | null | undefined;
     const left = Number(box?.x);
     const y = Number(box?.y);
@@ -309,6 +311,37 @@ export function ContributionChart({
     // comes from the scale as a band start, so the centre has to be derived.
     return { left, width, y, centre: left + width / 2 };
   };
+
+  /**
+   * The plot area, so the column highlight does not spill over the axis labels
+   * and the legend.
+   *
+   * Spanning the whole container was what made the hover state look wrong: the
+   * wash covered the x-axis captions and ran under the legend. recharts' own
+   * cursor was confined to the plot, and so is this.
+   *
+   * The grid is the chart's own account of where the plot is; the fallback stops
+   * at the legend, which is the other thing the highlight must not cross.
+   */
+  const plotArea = React.useCallback((segmentTop: number) => {
+    const container = wrapperRef.current;
+    if (!container) return { top: segmentTop, height: 0 };
+
+    const base = container.getBoundingClientRect();
+    const grid = container.querySelector('.recharts-cartesian-grid');
+    const gridBox = grid?.getBoundingClientRect();
+
+    if (gridBox && gridBox.height > 0) {
+      return { top: gridBox.top - base.top, height: gridBox.height };
+    }
+
+    const legend = container.querySelector('.recharts-legend-wrapper');
+    const legendTop = legend
+      ? legend.getBoundingClientRect().top - base.top
+      : base.height;
+
+    return { top: segmentTop, height: Math.max(0, legendTop - segmentTop) };
+  }, []);
 
   return (
     // `onMouseLeave` belongs on this wrapper, not on the chart. The tooltip is
@@ -363,7 +396,7 @@ export function ContributionChart({
                 const row = (entry as { payload?: ChartRow } | null)?.payload;
                 const box = geometry(entry);
                 if (!row || !box) return;
-                setHover({ row, ...box });
+                setHover({ row, ...box, plot: plotArea(box.y) });
                 setAnchor(box.centre);
               }}
               onClick={(entry: unknown) => {
@@ -396,16 +429,20 @@ export function ContributionChart({
 
         {/* Column highlight. Recharts' own `cursor` belonged to the Tooltip we no
             longer render, and it is what tells you which column you are on
-            before the tooltip paints. */}
-        {hover && (
+            before the tooltip paints. It is confined to the plot area and uses
+            the host's cursor colour, both of which the first attempt got wrong:
+            a full-height `bg-muted/60` wash also covered the axis captions and
+            ran under the legend. */}
+        {hover && hover.plot.height > 0 && (
           <div
             aria-hidden
-            className="pointer-events-none absolute z-10 rounded-sm bg-muted/60"
+            className="pointer-events-none absolute z-10"
             style={{
               left: `${hover.left}px`,
               width: `${hover.width}px`,
-              top: 0,
-              bottom: 0,
+              top: `${hover.plot.top}px`,
+              height: `${hover.plot.height}px`,
+              backgroundColor: 'hsl(var(--muted))',
             }}
           />
         )}

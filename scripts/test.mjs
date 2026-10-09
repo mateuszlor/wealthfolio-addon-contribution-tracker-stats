@@ -101,6 +101,31 @@ test('honours activityTypeOverride over activityType', () => {
   assert.equal(dropped.records.length, 0);
 });
 
+test('reads the currency from the activity itself', () => {
+  // Regression: the page hard-coded `currency = 'PLN'`, so EUR deposits (Sejf
+  // EUR, Revolut EUR) were formatted with the wrong symbol and, worse, their
+  // totals were shown as if comparable with the PLN ones.
+  const { records } = intake.toContributionRecords([
+    { activityType: 'DEPOSIT', date: '2026-01-01T00:00:00Z', amount: '100', currency: 'EUR' },
+  ]);
+  assert.equal(records[0].currency, 'EUR');
+});
+
+test('falls back to the $CASH symbol when the currency field is missing', () => {
+  const { records } = intake.toContributionRecords([
+    { activityType: 'DEPOSIT', activityDate: '2026-02-01T09:00:00Z', amount: 250, assetSymbol: '$CASH-USD' },
+  ]);
+  assert.equal(records[0].currency, 'USD');
+});
+
+test('keeps a deposit with no currency hint instead of dropping it', () => {
+  const { records } = intake.toContributionRecords([
+    { activityType: 'DEPOSIT', activityDate: '2026-02-01T09:00:00Z', amount: 250 },
+  ]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].currency, intake.FALLBACK_CURRENCY);
+});
+
 test('drops rows without a usable date and reports the count', () => {
   const { records, stats } = intake.toContributionRecords([
     { activityType: 'DEPOSIT', amount: '100' },

@@ -58,6 +58,31 @@ export function isDeposit(activity: RawActivity): boolean {
   return typeof type === 'string' && type.toUpperCase() === DEPOSIT;
 }
 
+/**
+ * Currency the amount is denominated in.
+ *
+ * `ActivityDetails` carries `currency` directly; the legacy `Activity` shape
+ * only marks cash rows with a `$CASH-<ISO>` symbol. When neither is present the
+ * record falls back to the addon's base currency rather than being dropped — a
+ * missing label must not cost a deposit, but it has to be visible somewhere,
+ * which the per-currency selector on the page is.
+ */
+export const FALLBACK_CURRENCY = 'PLN';
+
+export function readCurrency(activity: RawActivity): string {
+  const direct =
+    typeof activity.currency === 'string' ? activity.currency.trim().toUpperCase() : '';
+  if (direct) return direct;
+
+  const symbol = activity.assetSymbol ?? activity.symbol;
+  if (typeof symbol === 'string') {
+    const match = /^\$CASH-([A-Z]{3})$/i.exec(symbol.trim());
+    if (match) return match[1].toUpperCase();
+  }
+
+  return FALLBACK_CURRENCY;
+}
+
 /** `ActivityDetails.date` first, `Activity.activityDate` as the fallback. */
 export function readDate(activity: RawActivity): Date | undefined {
   return toDate(activity.date ?? activity.activityDate);
@@ -120,6 +145,7 @@ export function toContributionRecords(activities: unknown): Intake {
     records.push({
       date,
       amount,
+      currency: readCurrency(activity),
       accountId: account.id,
       accountName: account.name,
       activityId: typeof activity.id === 'string' ? activity.id : '',

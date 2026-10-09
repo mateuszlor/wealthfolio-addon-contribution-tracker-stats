@@ -37,6 +37,33 @@ a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
 | `npm run version:check` | Asserts manifest and package versions agree |
 | `npm run version:bump` / `:minor` / `:major` | Bumps the version without packaging |
 
+## Git workflow
+
+**Never force-push.** Not `git push --force`, and not `--force-with-lease` either — that is
+still a force push, it just checks the remote tip first.
+
+A published branch is the shared record of what was reviewed, released and based on by other
+work. A non-fast-forward push silently drops commits that someone may already have pulled,
+so history is only ever extended, never rewritten.
+
+Concretely:
+
+- Amend, rebase and squash **before** the branch is pushed, or not at all.
+- Once pushed, add follow-up commits. A fix becomes its own commit rather than an amend.
+- `git revert` is the way to undo something already pushed.
+- If a rewrite is genuinely unavoidable, delete the remote branch first — an explicit,
+  separate act — and push again. That is a decision for the maintainer, not a default.
+
+`.git/hooks/pre-push` enforces this locally: it refuses any ref whose remote tip is not an
+ancestor of the local commit. Hooks are not tracked by git, so after a fresh clone reinstall
+it:
+
+```sh
+cp docs/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+The copy lives in `docs/pre-push` for exactly that reason.
+
 ## Layout
 
 ```

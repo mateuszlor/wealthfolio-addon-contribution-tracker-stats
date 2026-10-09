@@ -11,3 +11,6 @@ package-lock.json -text
 *.yml text eol=lf
 .gitattributes text eol=lf
 .gitignore text eol=lf
+
+# Shell scripts must stay LF: a CRLF hook fails on the first line.
+docs/pre-push text eol=lf

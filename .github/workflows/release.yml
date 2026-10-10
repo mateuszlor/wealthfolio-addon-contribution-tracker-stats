@@ -71,6 +71,40 @@ jobs:
           path: release/*.zip
           if-no-files-found: error
 
+      # Refuses to touch a release that already ships an archive.
+      #
+      # The publish step reports success either way: a manual run can resolve to
+      # a version that was released months ago, and the mismatch is only visible
+      # afterwards, as a download that no longer matches its tag. This runs
+      # first, so the run fails while nothing has been modified.
+      - name: Refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # A missing release is the normal case, and gh prints a 404 body to
+          # stdout with exit code 1, so `|| echo 0` alone would capture the JSON.
+          # Anything that is not a bare number is treated as "no release".
+          count="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets | length' 2>/dev/null || true)"
+          case "$count" in
+            ''|*[!0-9]*) count=0 ;;
+          esac
+          if [ "$count" != "0" ]; then
+            echo "::error::Release $TAG already has $count asset(s). Refusing to overwrite."
+            echo "Either this version was already released, or the manual bump"
+            echo "resolved to it by accident. Check manifest.json before re-running."
+            exit 1
+          fi
+          echo "Release $TAG is empty; safe to publish."
+
+      # `overwrite_files` is deliberately absent. With it, a manual run that
+      # resolved to a version someone had already released silently deleted that
+      # release's archive and replaced it with a build from an unrelated commit —
+      # the `v1.0.2` "Privacy toggle" release shipped the wrong ZIP because
+      # `manifest.json` still said 1.0.1 and the patch bump produced 1.0.2.
+      # Failing here is the correct outcome: a released version's archive is part
+      # of the record of what was released.
       - name: Attach archive to GitHub release
         uses: softprops/action-gh-release@v2
         with:

@@ -54,6 +54,32 @@ two commits of noise in a pull request.
 Do not open pull requests against repositories you do not own without being asked, and never
 write legal text — licences, attestations, terms — on the maintainer's behalf.
 
+**Start every session by syncing `main`, and never work from a branch that predates it.** Run
+`git fetch origin` before reading any branch, and check where you stand:
+
+```sh
+git fetch origin
+git log --oneline -1 origin/main          # what the remote actually has
+git rev-list --count HEAD..origin/main    # how far behind you are
+git branch -vv                            # local main vs its remote
+```
+
+A local `main` is a cache, not the truth. It stays stale until fetched, and a stale `main` has
+already caused three separate failures here:
+
+- A merged feature branch looked unmerged, so work went to a branch that was already in `main`.
+- A bug that was live on `main` was reported as not existing on it.
+- A pull request was merged while a fix committed after it was pushed to the same branch, and
+  the merge landed without it. The CI fix is still unmerged because of this.
+
+The rule that follows: **check `origin/main` again before pushing and before opening a pull
+request**, not only at the start. A session that merges work and then adds a fix to the same
+branch must expect the first pull request to be gone; open a second one, or rebase the branch
+onto the updated `main` first so the fix is reviewable on its own.
+
+When work has to land on `main`, base it on the fetched `main`, not on whatever the branch
+happened to start from.
+
 ## Layout of the code
 
 - `src/lib/*.ts` — pure, React-free and SDK-free aggregation and formatting. Everything

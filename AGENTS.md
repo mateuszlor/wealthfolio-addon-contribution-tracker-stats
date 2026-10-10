@@ -89,6 +89,18 @@ installed SDK and UI package actually do.
   version from the tag. Build a local archive with an explicit
   `node scripts/build-release.mjs --version <v>` or the import may be a no-op.
 
+## Testing against a real host
+
+`npm run verify` covers the pure modules and nothing else. Anything about rendering, the
+sandbox or pointer behaviour needs a real Wealthfolio, and the procedure for that — the fixed
+click targets, the browser tools, and the bisect for "the bar click did nothing" — is
+[`docs/manual-test.md`](docs/manual-test.md).
+
+Two things in it are not optional. **Run `git fetch origin` before comparing `main` with a
+branch**: a stale local ref makes a merged branch look unmerged, which has already sent work to
+the wrong branch. And **hand the ZIP to the maintainer and wait** — the install dialog opens a
+native file picker that no automation can drive, so the human picks the file.
+
 ## Adding to this file
 
 If you discover host behaviour that contradicts the above, fix the entry rather than adding a

@@ -10,11 +10,30 @@ the human picks the file and the agent waits.
 
 ## The division of labour
 
-**The maintainer signs in, and picks the ZIP file when asked.** Everything else the agent does.
+**The maintainer signs in, picks the ZIP file, and clicks the bar.** Everything else the agent
+does.
 
 Never type into the login form and never guess a password. The session may also be absent
 entirely, in which case the addon route renders a blank frame and every later step fails for
 the wrong reason. Confirm a signed-in session before anything else — see step 2.
+
+### The bar click is a human action, and that is the point
+
+The maintainer clicks the bar and reports what happened. Do not try to synthesise the click.
+
+A dispatched `MouseEvent` sequence does not reach recharts the way a real pointer does, and an
+agent that cannot see that will read the empty result as a broken fix. That has happened: a
+correct drill-down was declared broken because the synthetic click never landed, and the
+failing measurement was then treated as proof that the fix was innocent. It was not a proof of
+anything — it was a broken instrument.
+
+The cost of asking for one click is a minute. The cost of not asking is a long detour through
+fiber introspection, worktrees and control builds, ending in a confident wrong answer.
+
+Read the browser tools the same way: `evaluate` has returned an empty object on a page that was
+visibly rendering, and `snapshot` has returned a tree with no refs for the same page. When the
+instrument disagrees with the screenshot, the instrument is wrong. Do not draw a conclusion
+from it, and do not spend the session forcing it.
 
 ## Parameter
 
@@ -114,29 +133,28 @@ await tools["browser"].evaluate({ tabID, frameID, script: `JSON.stringify({
 
 Non-zero bars and a `TOTAL CONTRIBUTED` line mean the route and the data path work.
 
-### 7. Drive the chart
+### 7. The maintainer clicks the bar
 
-Find the bars, then let the host decide what a click means:
+Ask for it, then stop and wait. Do not synthesise the event.
 
-```js
-const rects = [...document.querySelectorAll('.recharts-bar-rectangle path')];
-const boxes = rects.map((el, i) => { const b = el.getBoundingClientRect();
-  return { i, h: b.height, x: b.x + b.width / 2, y: b.y + b.height / 2 }; })
-  .filter(b => b.h > 4).sort((a, b) => b.h - a.h);
-```
+"Click a bar in Contribution Stats and tell me whether the details panel opens, and whether it
+lists anything" is one sentence and settles in a minute what an agent cannot measure reliably.
 
-Dispatch the click as a full `MouseEvent` sequence (`mouseenter`, `mouseover`, `mousemove`,
-`mousedown`, `mouseup`, `click`) with `clientX` / `clientY` from the box. recharts attaches its
-handlers per shape, so a bare `click` can miss.
+For reference, the bars are `.recharts-bar-rectangle path` inside the sandbox frame, and the
+tallest one is the most informative to click. But whether they are there is the maintainer's
+answer to rely on, not an `evaluate` result.
 
-### 8. Read the result — and trust only this
+### 8. Read the result
+
+If the maintainer reports it open, the remaining checks worth doing are the ones automation is
+good at — reading the rendered totals and comparing them with the summary above the chart.
 
 The drill-down panel is a Radix `Sheet side="right"`, which **portals out of the addon frame and
 attaches to `document.body`**. Checking `.cts-root` children, or anything scoped inside the
 frame's own subtree, will report that no panel exists even when one is open. That is how a
 working panel gets mistaken for a broken one.
 
-Assert on the panel itself:
+If a machine read is wanted anyway, assert on the panel itself:
 
 ```js
 await tools["browser"].evaluate({ tabID, frameID, script: `JSON.stringify({
@@ -149,15 +167,18 @@ An open sheet is a `[data-side]` element with `data-state="open"`.
 
 ### When the panel does not open
 
-Do not conclude the fix is broken, and do not start editing code. Bisect the chain in the live
-DOM — each step is a fact, not a guess:
+First establish *who* observed it. If a human clicked and saw nothing, the failure is real and
+worth chasing. If an agent's own instrumentation said so, the first hypothesis is the
+instrumentation: a synthetic click, a stale fiber tree, or an `evaluate` that returned `{}`
+while the page was plainly rendering. Confirm with the maintainer before touching any code.
+
+Only once a human click has been ruled out, bisect the chain:
 
 | Check | How | Reading |
 | --- | --- | --- |
 | `onBarClick` is wired | `getComputedStyle(barPath).cursor` on `.recharts-bar-rectangle path` | `pointer` only when `onBarClick` is set; `default` means the chart got no handler |
 | tooltip receives it | from the tooltip's `__reactFiber`, walk `.return` for a node whose `memoizedProps` has `onSelect` | absent `onSelect` means the tooltip was rendered non-interactive |
 | handler is the fixed one | read `memoizedProps.onSelect.toString()` | the source tells you which code is actually running — minified, but readable |
-| panel state | walk the fiber tree for the node whose `memoizedProps` has `open` + `records` + `periodLabel` | `open: false` after a delivered click means the state setter did not run |
 
 Find that fiber by id-free traversal from any DOM node inside the frame:
 
@@ -173,10 +194,11 @@ Two traps that cost time here:
 
 - `document.querySelector('div.pointer-events-auto')` matches the **interval selector**, not
   the chart tooltip. Anchor on the tooltip row's `aria-label` instead.
-- React event props are reachable via the element's `__reactProps$…` key. Calling
-  `memoizedProps.onSelect({...})` directly bypasses recharts and the DOM event path — useful for
-  proving *the handler* works, but it does not prove *the click* works. Report the two
-  separately.
+- Reading a fiber's `memoizedProps` gives you the props **as of the last render that fiber
+  committed**. After an event, the live tree may already be a newer one, so a stale read says
+  `open: false` on a panel that is open. This is the specific way an agent concluded a correct
+  fix was broken; treat a fiber read as a hint, never as a verdict, and never as grounds for
+  rewriting working code.
 
 ### 9. Console noise that is not a failure
 
@@ -189,9 +211,9 @@ Judge the click by the DOM, not by these.
 
 ## The bar click, in one line
 
-If a bar click does nothing, the question is always *which link in the chain broke*, and the
-answer comes from reading five things in this order: cursor on the bar → `onSelect` on the
-tooltip → the handler's source → the panel's `open` prop → the sheet in `document.body`.
+If a bar click does nothing, ask the maintainer to click it before touching anything. One human
+click separates "the feature is broken" from "my instrument is broken", and the second is the
+more common one.
 
 ## What this procedure does not cover
 

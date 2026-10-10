@@ -101,6 +101,17 @@ branch**: a stale local ref makes a merged branch look unmerged, which has alrea
 the wrong branch. And **hand the ZIP to the maintainer and wait** — the install dialog opens a
 native file picker that no automation can drive, so the human picks the file.
 
+- **Never trust instrumentation over a screenshot.** When `evaluate` returns an empty object, or
+  `snapshot` returns a tree with no refs, on a page that is plainly rendering, the tool is
+  wrong — not the page. That has already cost a session: a correct drill-down was declared
+  broken from a stale fiber read and a synthetic click that never landed, and the failing
+  measurement was then used to rule the fix innocent. When an instrument contradicts what is
+  on screen, say so and ask for a human observation. Do not build a second instrument to
+  contradict the first.
+- **A dispatched event is not a click.** `MouseEvent` sequences injected into the page do not
+  reach recharts the way a real pointer does. Pointer-driven behaviour is the maintainer's to
+  exercise.
+
 ## Adding to this file
 
 If you discover host behaviour that contradicts the above, fix the entry rather than adding a

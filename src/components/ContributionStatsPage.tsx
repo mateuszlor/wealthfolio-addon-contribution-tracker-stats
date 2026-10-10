@@ -22,6 +22,7 @@ import { ContributionChart, seriesColor, type BarClickInfo, type ChartRow, type 
 import { DrillDownPanel } from './DrillDownPanel';
 import { MonthSwitcher } from './MonthSwitcher';
 import {
+  barClickToDrillDown,
   bucketize,
   bucketizeByAccount,
   fillGaps,
@@ -221,40 +222,42 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
 
   const handleBarClick = React.useCallback(
     (info: BarClickInfo) => {
-      // In the per-account view the chart identifies accounts positionally, so
-      // the series key has to be resolved before it can be filtered on.
-      if (splitMode === 'account') {
-        const account = resolveAccountFromSeriesKey(split.accounts, info.dataKey);
-        // A missing entry must not fall through to "no account", which would
-        // list every account under this segment's name.
-        if (!account) return;
+      // Only the per-account view has accounts behind its series keys. In the
+      // total view there is nothing to resolve, so no account filter applies and
+      // the panel lists the period.
+      const accounts = splitMode === 'account' ? split.accounts : [];
 
-        setDrillDown({
-          periodKey: info.periodKey,
-          periodLabel: info.periodLabel,
-          accountId: account.id,
-          accountName: account.name,
-        });
-        return;
-      }
+      const selection = barClickToDrillDown(info, accounts);
+      // A key that resolves to nothing must not fall through to "no account",
+      // which would list every account under this segment's name.
+      if (!selection) return;
 
       setDrillDown({
-        periodKey: info.periodKey,
+        periodKey: selection.periodKey,
         periodLabel: info.periodLabel,
-        accountId: info.accountId,
-        accountName: info.accountName,
+        accountId: selection.accountId,
+        accountName:
+          selection.accountId && accounts.length > 0
+            ? resolveAccountFromSeriesKey(accounts, info.dataKey)?.name
+            : undefined,
       });
     },
     [splitMode, split.accounts],
   );
 
   // Anything that changes what the chart means invalidates an open panel:
-  // granularity rewrites the period keys, the range rewrites the record set,
-  // switching view changes which account the segment refers to, and a currency
-  // switch swaps the whole record set.
+  // Granularity rewrites the period keys, switching view changes which account
+  // a segment refers to, and a currency switch swaps the whole record set.
+  //
+  // The range is deliberately absent. React compares it by identity, and any
+  // window rebuilt during render would re-run this on every render, closing a
+  // panel in the same commit that the click opened it. `stableRange` keeps the
+  // identity steady, but the reset does not need the window at all: the panel's
+  // records are already scoped through it, so a panel left open across a window
+  // change re-reads the new range rather than showing the old one's deposits.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, range, splitMode, currency]);
+  }, [granularity, splitMode, currency]);
 
   // The panel must list exactly the deposits the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the

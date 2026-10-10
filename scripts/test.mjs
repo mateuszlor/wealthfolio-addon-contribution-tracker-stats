@@ -7,7 +7,7 @@
  *
  * Usage: node scripts/test.mjs
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -250,6 +250,77 @@ test('a single month counts as one month, not zero', () => {
 test('summarising nothing yields zeros', () => {
   const summary = contributions.summarize([]);
   assert.deepEqual(summary, { total: 0, count: 0, average: 0, monthlyAverage: 0 });
+});
+
+/* ----------------------------------------------------------------- window */
+
+const { mod: window, cleanup: cleanupWindow } = await loadTs('src/lib/window.ts');
+
+test('the same window keeps one identity across renders', () => {
+  // The regression. `rangeFor` builds fresh `Date`s, so handing its result
+  // straight to the hook gave every render a new object. The drill-down's reset
+  // effect depends on the range, so it re-ran on every render and cleared the
+  // panel in the same commit the click opened it — the click appeared to do
+  // nothing while every other test stayed green.
+  const intervalRange = () => ({ from: new Date('2025-10-10'), to: new Date('2026-10-10') });
+  const selection = { kind: 'interval', code: '1Y' };
+
+  const first = window.stableRange(selection, intervalRange, undefined);
+  const second = window.stableRange(selection, intervalRange, first);
+  const third = window.stableRange(selection, intervalRange, second);
+
+  assert.equal(second, first, 'an unchanged window must keep its object');
+  assert.equal(third, first);
+
+  // A different window is a new object, so the effect that depends on it runs.
+  const moved = window.stableRange({ kind: 'month', key: '2026-03' }, intervalRange, first);
+  assert.notEqual(moved, first);
+  assert.equal(moved.from?.getFullYear(), 2026);
+  assert.equal(moved.from?.getMonth(), 2);
+});
+
+test('a window with equal instants but different objects is unchanged', () => {
+  const resolver = () => ({ from: new Date(1000), to: new Date(2000) });
+  const first = window.stableRange({ kind: 'interval', code: '1Y' }, resolver, undefined);
+
+  // A resolver returning equal instants must not be mistaken for a new window,
+  // or every preset lookup would reset the panel.
+  const again = window.stableRange({ kind: 'interval', code: '1Y' }, resolver, first);
+  assert.equal(again, first);
+});
+
+test('an open window stays open rather than collapsing to undefined', () => {
+  const open = { from: undefined, to: undefined };
+  const missing = undefined;
+
+  assert.equal(window.sameWindow(open, missing), false);
+  assert.equal(window.sameWindow(missing, missing), true);
+  assert.equal(window.sameWindow(open, { from: undefined, to: undefined }), true);
+});
+
+/* ------------------------------------------------------- drill-down reset */
+
+/**
+ * The page closes an open drill-down whenever the chart's meaning changes. The
+ * range used to be one of those dependencies, and React compares it by identity:
+ * a window rebuilt during render re-ran the effect on every render, so a click
+ * opened the panel and the same commit closed it. No bar ever showed its
+ * deposits, with every test green.
+ *
+ * The dependency list is a source-level contract, so it is asserted as one. It
+ * has to name granularity, view and currency, and it must not name the range.
+ */
+test('the drill-down reset does not depend on the range', async () => {
+  const source = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+
+  const effect = source.match(/setDrillDown\(null\);\s*\},?\s*\[([^\]]*)\]/);
+  assert.ok(effect, 'the reset effect must be findable, with its dependency list');
+
+  const deps = effect[1];
+  for (const required of ['granularity', 'splitMode', 'currency']) {
+    assert.match(deps, new RegExp(required), `${required} must still reset the panel`);
+  }
+  assert.doesNotMatch(deps, /range/, 'the range must not reset the panel: identity comparison closed it');
 });
 
 /* ---------------------------------------------------------------- privacy */
@@ -690,6 +761,71 @@ test('an out-of-range series key resolves to nothing, not to "every account"', (
 
   assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 's7'), undefined);
   assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'total'), undefined);
+});
+
+test('clicking a total-view bar lists its deposits, not an empty panel', () => {
+  // The regression, end to end through the selector.
+  //
+  // The chart used to decide "is this an account?" by asking whether the key was
+  // literally `total`. That is a rename away from silently answering "yes, an
+  // account called s0" and filtering on an id no record has, which is what left
+  // every click opening an empty panel.
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'acc-1'),
+    record('2026-01-06T00:00:00Z', 200, 'acc-2'),
+  ];
+
+  // The total view has no accounts behind its key.
+  const info = contributions.barClickToDrillDown(
+    { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 'total', value: 300 },
+    [],
+  );
+
+  // No account filter: the segment belongs to the period, not to an account.
+  assert.equal(info.accountId, undefined);
+
+  const panel = contributions.selectDrillDownRecords(records, OPEN, info, 'month');
+
+  assert.equal(panel.length, 2, 'the panel must list the deposits behind the bar');
+  assert.equal(panel.reduce((sum, r) => sum + r.amount, 0), 300);
+});
+
+test('a per-account click resolves to the account behind the series', () => {
+  const accounts = [
+    { id: 'acc-1', name: 'Main' },
+    { id: 'acc-2', name: 'Pension' },
+  ];
+
+  const info = contributions.barClickToDrillDown(
+    { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 's1', value: 200 },
+    accounts,
+  );
+
+  assert.equal(info.accountId, 'acc-2');
+
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'acc-1', 'Main'),
+    record('2026-01-06T00:00:00Z', 200, 'acc-2', 'Pension'),
+  ];
+
+  const panel = contributions.selectDrillDownRecords(records, OPEN, info, 'month');
+
+  assert.equal(panel.length, 1);
+  assert.equal(panel[0].amount, 200);
+});
+
+test('an unresolvable series key opens no panel at all', () => {
+  const accounts = [{ id: 'acc-1', name: 'Main' }];
+
+  // Out of range: opening the period here would list every account under a
+  // segment name that names none of them.
+  assert.equal(
+    contributions.barClickToDrillDown(
+      { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 's7', value: 10 },
+      accounts,
+    ),
+    undefined,
+  );
 });
 
 /* --------------------------------------------------------------------- run */

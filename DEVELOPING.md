@@ -21,7 +21,7 @@ npm run build && npm run package:no-bump
 
 `npm run package:no-bump` produces `release/contribution-tracker-stats-<version>.zip` and
 a convenience copy at `contribution-tracker-stats.zip`. Import that copy through
-**Settings → Add-ons → Import from file**.
+**Settings → Add-ons → Install from File**.
 
 ### Scripts
 
@@ -428,3 +428,13 @@ UI behaviour is verified by importing the package into Wealthfolio. That include
 thing CI cannot check at all — the sandbox itself: press the eye button, reload the route
 (the mask must still be there, and no *"add-on uses browser storage"* toast may appear),
 then uninstall and confirm the flag is gone.
+
+[`docs/manual-test.md`](docs/manual-test.md) is the procedure for that pass: the install route,
+the fixed click targets in the chart, and how to tell a broken click from a broken test. Two
+details worth knowing before starting:
+
+- **Build with an explicit version.** `manifest.json` carries the version of the last released
+  tag, so re-installing an unchanged version can be a no-op and leaves the old build under test.
+  `node scripts/build-release.mjs --version <v>` with anything above the installed version.
+- **The install dialog opens a native file picker.** *Install from File* has no `<input
+  type=file>` in the DOM; the ZIP has to be chosen by hand.

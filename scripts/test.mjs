@@ -252,6 +252,52 @@ test('summarising nothing yields zeros', () => {
   assert.deepEqual(summary, { total: 0, count: 0, average: 0, monthlyAverage: 0 });
 });
 
+/* ----------------------------------------------------------------- window */
+
+const { mod: window, cleanup: cleanupWindow } = await loadTs('src/lib/window.ts');
+
+test('the same window keeps one identity across renders', () => {
+  // The regression. `rangeFor` builds fresh `Date`s, so handing its result
+  // straight to the hook gave every render a new object. The drill-down's reset
+  // effect depends on the range, so it re-ran on every render and cleared the
+  // panel in the same commit the click opened it — the click appeared to do
+  // nothing while every other test stayed green.
+  const intervalRange = () => ({ from: new Date('2025-10-10'), to: new Date('2026-10-10') });
+  const selection = { kind: 'interval', code: '1Y' };
+
+  const first = window.stableRange(selection, intervalRange, undefined);
+  const second = window.stableRange(selection, intervalRange, first);
+  const third = window.stableRange(selection, intervalRange, second);
+
+  assert.equal(second, first, 'an unchanged window must keep its object');
+  assert.equal(third, first);
+
+  // A different window is a new object, so the effect that depends on it runs.
+  const moved = window.stableRange({ kind: 'month', key: '2026-03' }, intervalRange, first);
+  assert.notEqual(moved, first);
+  assert.equal(moved.from?.getFullYear(), 2026);
+  assert.equal(moved.from?.getMonth(), 2);
+});
+
+test('a window with equal instants but different objects is unchanged', () => {
+  const resolver = () => ({ from: new Date(1000), to: new Date(2000) });
+  const first = window.stableRange({ kind: 'interval', code: '1Y' }, resolver, undefined);
+
+  // A resolver returning equal instants must not be mistaken for a new window,
+  // or every preset lookup would reset the panel.
+  const again = window.stableRange({ kind: 'interval', code: '1Y' }, resolver, first);
+  assert.equal(again, first);
+});
+
+test('an open window stays open rather than collapsing to undefined', () => {
+  const open = { from: undefined, to: undefined };
+  const missing = undefined;
+
+  assert.equal(window.sameWindow(open, missing), false);
+  assert.equal(window.sameWindow(missing, missing), true);
+  assert.equal(window.sameWindow(open, { from: undefined, to: undefined }), true);
+});
+
 /* ---------------------------------------------------------------- privacy */
 
 const { mod: privacy, cleanup: cleanupPrivacy } = await loadTs('src/lib/privacy.ts');

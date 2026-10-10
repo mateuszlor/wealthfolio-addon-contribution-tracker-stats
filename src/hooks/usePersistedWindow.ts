@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 import { getInitialIntervalData, type TimePeriod } from '@wealthfolio/ui';
+import { stableRange, type DateWindow } from '../lib/window';
 
 /**
  * `storage` keys are capped at 128 characters from `[A-Za-z0-9_.:-]`, and the
@@ -34,19 +35,9 @@ export interface PersistedWindowState {
 /** The addon opens on the last year, the same default as before. */
 const DEFAULT_SELECTION: WindowSelection = { kind: 'interval', code: '1Y' };
 
-/** Inclusive bounds of a `YYYY-MM` month. */
-export function monthRange(key: string): { from: Date; to: Date } {
-  const [year, month] = key.split('-').map((part) => Number.parseInt(part, 10));
-  const from = new Date(year, month - 1, 1);
-  // Day 0 of the next month is the last day of this one.
-  const to = new Date(year, month, 0, 23, 59, 59, 999);
-  return { from, to };
-}
-
-function rangeFor(selection: WindowSelection): { from?: Date; to?: Date } {
-  if (selection.kind === 'month') return monthRange(selection.key);
-  return getInitialIntervalData(selection.code).range ?? {};
-}
+/** The host owns the interval table, so the addon reads rather than copies it. */
+const intervalRange = (code: TimePeriod): DateWindow | undefined =>
+  getInitialIntervalData(code).range;
 
 function deserialise(stored: unknown): WindowSelection | undefined {
   if (typeof stored !== 'object' || stored === null) return undefined;
@@ -113,5 +104,10 @@ export function usePersistedWindow(ctx: AddonContext): PersistedWindowState {
     [persist, selection],
   );
 
-  return { selection, range: rangeFor(selection), setInterval, setMonth };
+  // Stable by value, so a click that sets the drill-down is not undone by this
+  // render's effect. See `stableRange` in lib/window.ts.
+  const range = useRef<DateWindow | undefined>(undefined);
+  range.current = stableRange(selection, intervalRange, range.current);
+
+  return { selection, range: range.current, setInterval, setMonth };
 }

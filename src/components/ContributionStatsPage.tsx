@@ -246,12 +246,18 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
 
   // Anything that changes what the chart means invalidates an open panel:
-  // granularity rewrites the period keys, the range rewrites the record set,
-  // switching view changes which account the segment refers to, and a currency
-  // switch swaps the whole record set.
+  // Granularity rewrites the period keys, switching view changes which account
+  // a segment refers to, and a currency switch swaps the whole record set.
+  //
+  // The range is deliberately absent. React compares it by identity, and any
+  // window rebuilt during render would re-run this on every render, closing a
+  // panel in the same commit that the click opened it. `stableRange` keeps the
+  // identity steady, but the reset does not need the window at all: the panel's
+  // records are already scoped through it, so a panel left open across a window
+  // change re-reads the new range rather than showing the old one's deposits.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, range, splitMode, currency]);
+  }, [granularity, splitMode, currency]);
 
   // The panel must list exactly the deposits the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the

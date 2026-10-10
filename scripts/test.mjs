@@ -7,7 +7,7 @@
  *
  * Usage: node scripts/test.mjs
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -296,6 +296,31 @@ test('an open window stays open rather than collapsing to undefined', () => {
   assert.equal(window.sameWindow(open, missing), false);
   assert.equal(window.sameWindow(missing, missing), true);
   assert.equal(window.sameWindow(open, { from: undefined, to: undefined }), true);
+});
+
+/* ------------------------------------------------------- drill-down reset */
+
+/**
+ * The page closes an open drill-down whenever the chart's meaning changes. The
+ * range used to be one of those dependencies, and React compares it by identity:
+ * a window rebuilt during render re-ran the effect on every render, so a click
+ * opened the panel and the same commit closed it. No bar ever showed its
+ * deposits, with every test green.
+ *
+ * The dependency list is a source-level contract, so it is asserted as one. It
+ * has to name granularity, view and currency, and it must not name the range.
+ */
+test('the drill-down reset does not depend on the range', async () => {
+  const source = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+
+  const effect = source.match(/setDrillDown\(null\);\s*\},?\s*\[([^\]]*)\]/);
+  assert.ok(effect, 'the reset effect must be findable, with its dependency list');
+
+  const deps = effect[1];
+  for (const required of ['granularity', 'splitMode', 'currency']) {
+    assert.match(deps, new RegExp(required), `${required} must still reset the panel`);
+  }
+  assert.doesNotMatch(deps, /range/, 'the range must not reset the panel: identity comparison closed it');
 });
 
 /* ---------------------------------------------------------------- privacy */

@@ -692,6 +692,71 @@ test('an out-of-range series key resolves to nothing, not to "every account"', (
   assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'total'), undefined);
 });
 
+test('clicking a total-view bar lists its deposits, not an empty panel', () => {
+  // The regression, end to end through the selector.
+  //
+  // The chart used to decide "is this an account?" by asking whether the key was
+  // literally `total`. That is a rename away from silently answering "yes, an
+  // account called s0" and filtering on an id no record has, which is what left
+  // every click opening an empty panel.
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'acc-1'),
+    record('2026-01-06T00:00:00Z', 200, 'acc-2'),
+  ];
+
+  // The total view has no accounts behind its key.
+  const info = contributions.barClickToDrillDown(
+    { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 'total', value: 300 },
+    [],
+  );
+
+  // No account filter: the segment belongs to the period, not to an account.
+  assert.equal(info.accountId, undefined);
+
+  const panel = contributions.selectDrillDownRecords(records, OPEN, info, 'month');
+
+  assert.equal(panel.length, 2, 'the panel must list the deposits behind the bar');
+  assert.equal(panel.reduce((sum, r) => sum + r.amount, 0), 300);
+});
+
+test('a per-account click resolves to the account behind the series', () => {
+  const accounts = [
+    { id: 'acc-1', name: 'Main' },
+    { id: 'acc-2', name: 'Pension' },
+  ];
+
+  const info = contributions.barClickToDrillDown(
+    { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 's1', value: 200 },
+    accounts,
+  );
+
+  assert.equal(info.accountId, 'acc-2');
+
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'acc-1', 'Main'),
+    record('2026-01-06T00:00:00Z', 200, 'acc-2', 'Pension'),
+  ];
+
+  const panel = contributions.selectDrillDownRecords(records, OPEN, info, 'month');
+
+  assert.equal(panel.length, 1);
+  assert.equal(panel[0].amount, 200);
+});
+
+test('an unresolvable series key opens no panel at all', () => {
+  const accounts = [{ id: 'acc-1', name: 'Main' }];
+
+  // Out of range: opening the period here would list every account under a
+  // segment name that names none of them.
+  assert.equal(
+    contributions.barClickToDrillDown(
+      { periodKey: '2026-01', periodLabel: 'Jan 2026', dataKey: 's7', value: 10 },
+      accounts,
+    ),
+    undefined,
+  );
+});
+
 /* --------------------------------------------------------------------- run */
 let failed = 0;
 for (const { name, fn } of tests) {

@@ -31,13 +31,15 @@ export interface BarClickInfo {
   periodLabel: string;
   /** The period key (e.g., "2026-01"). */
   periodKey: string;
-  /** The account id (undefined for total view). */
-  accountId?: string;
-  /** The account name (undefined for total view). */
-  accountName?: string;
   /** The value of the segment. */
   value: number;
-  /** The series dataKey (e.g., "s0" or "total"). */
+  /**
+   * The series key that was clicked (e.g., "s0" or "total").
+   *
+   * Deliberately not resolved to an account here. The chart cannot tell an
+   * account key from the total key, so the caller — which knows the view — maps
+   * it to an account itself. See `barClickToDrillDown`.
+   */
   dataKey: string;
 }
 
@@ -169,8 +171,6 @@ function InteractiveTooltip({
     onSelect?.({
       periodLabel: String(row.label),
       periodKey: String(row.periodKey),
-      accountId: item.dataKey === 'total' ? undefined : item.dataKey,
-      accountName: item.dataKey === 'total' ? undefined : item.label,
       value,
       dataKey: item.dataKey,
     });
@@ -410,11 +410,11 @@ export function ContributionChart({
                 const row = (entry as { payload?: ChartRow } | null)?.payload;
                 if (!row) return;
                 const value = Number(row[item.dataKey] ?? 0);
+                // Which account a segment belongs to is the caller's to resolve:
+                // it knows the view, the chart does not. See `barClickToDrillDown`.
                 onBarClick({
                   periodLabel: String(row.label),
                   periodKey: String(row.periodKey),
-                  accountId: item.dataKey === 'total' ? undefined : item.dataKey,
-                  accountName: item.dataKey === 'total' ? undefined : item.label,
                   value,
                   dataKey: item.dataKey,
                 });

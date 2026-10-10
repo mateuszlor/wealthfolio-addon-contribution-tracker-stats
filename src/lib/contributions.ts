@@ -409,6 +409,44 @@ export function resolveAccountFromSeriesKey(
   return accounts[Number.parseInt(match[1], 10)];
 }
 
+/** What the chart reports when a bar (or a tooltip row) is activated. */
+export interface BarClickSelection {
+  periodKey: string;
+  periodLabel: string;
+  /** The series that was clicked, e.g. `s0` or `total`. */
+  dataKey: string;
+  value: number;
+}
+
+/**
+ * Turns a bar click into the drill-down it stands for.
+ *
+ * The chart cannot decide this on its own: it is handed series keys, not
+ * accounts, and it has no way to tell an account key from the total key. It used
+ * to guess by comparing the key against the literal `total`, which is a rename
+ * away from silently filtering on an account id that does not exist — every
+ * click opening an empty panel.
+ *
+ * So the caller states which view it is in: `accounts` is empty in the total
+ * view, which makes "no account" the answer rather than a guess. `undefined` is
+ * returned for a key that resolves to nothing, because a caller treating that as
+ * "the whole period" would list every account under this segment's name.
+ */
+export function barClickToDrillDown(
+  click: BarClickSelection,
+  accounts: AccountRef[],
+): DrillDownSelection | undefined {
+  const selection: DrillDownSelection = { periodKey: click.periodKey };
+
+  if (accounts.length > 0) {
+    const account = resolveAccountFromSeriesKey(accounts, click.dataKey);
+    if (!account) return undefined;
+    selection.accountId = account.id;
+  }
+
+  return selection;
+}
+
 /**
  * The deposits behind one bar of the chart.
  *

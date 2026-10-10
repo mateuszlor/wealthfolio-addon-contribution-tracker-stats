@@ -22,6 +22,7 @@ import { ContributionChart, seriesColor, type BarClickInfo, type ChartRow, type 
 import { DrillDownPanel } from './DrillDownPanel';
 import { MonthSwitcher } from './MonthSwitcher';
 import {
+  barClickToDrillDown,
   bucketize,
   bucketizeByAccount,
   fillGaps,
@@ -221,28 +222,24 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
 
   const handleBarClick = React.useCallback(
     (info: BarClickInfo) => {
-      // In the per-account view the chart identifies accounts positionally, so
-      // the series key has to be resolved before it can be filtered on.
-      if (splitMode === 'account') {
-        const account = resolveAccountFromSeriesKey(split.accounts, info.dataKey);
-        // A missing entry must not fall through to "no account", which would
-        // list every account under this segment's name.
-        if (!account) return;
+      // Only the per-account view has accounts behind its series keys. In the
+      // total view there is nothing to resolve, so no account filter applies and
+      // the panel lists the period.
+      const accounts = splitMode === 'account' ? split.accounts : [];
 
-        setDrillDown({
-          periodKey: info.periodKey,
-          periodLabel: info.periodLabel,
-          accountId: account.id,
-          accountName: account.name,
-        });
-        return;
-      }
+      const selection = barClickToDrillDown(info, accounts);
+      // A key that resolves to nothing must not fall through to "no account",
+      // which would list every account under this segment's name.
+      if (!selection) return;
 
       setDrillDown({
-        periodKey: info.periodKey,
+        periodKey: selection.periodKey,
         periodLabel: info.periodLabel,
-        accountId: info.accountId,
-        accountName: info.accountName,
+        accountId: selection.accountId,
+        accountName:
+          selection.accountId && accounts.length > 0
+            ? resolveAccountFromSeriesKey(accounts, info.dataKey)?.name
+            : undefined,
       });
     },
     [splitMode, split.accounts],

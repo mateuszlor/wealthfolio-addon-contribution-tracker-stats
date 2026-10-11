@@ -12,7 +12,7 @@ import {
   useDateFormatting,
 } from '@wealthfolio/ui';
 import { maskAmount } from '../lib/privacy';
-import type { ContributionRecord } from '../lib/contributions';
+import type { ContributionRecord, Flow } from '../lib/contributions';
 
 export interface DrillDownPanelProps {
   /** Whether the sheet is open (a bar or tooltip row is selected). */
@@ -25,6 +25,8 @@ export interface DrillDownPanelProps {
   periodLabel: string;
   /** Optional account name (for per-account view). */
   accountName?: string;
+  /** Which ledger the panel is listing; the net view mixes both directions. */
+  flow?: Flow;
   /** Total amount for the period/account. */
   total: number;
   /** Currency code. */
@@ -48,6 +50,7 @@ export function DrillDownPanel({
   records,
   periodLabel,
   accountName,
+  flow = 'deposits',
   total,
   currency,
   amountsHidden,
@@ -71,6 +74,12 @@ export function DrillDownPanel({
     ? `${t('detailsFor')} ${accountName} · ${periodLabel}`
     : `${t('detailsFor')} ${periodLabel}`;
 
+  /** A caption distinguishing the three ledgers on the same panel. */
+  const flowCaption =
+    flow === 'withdrawals' ? t('viewWithdrawals')
+    : flow === 'net' ? t('viewNet')
+    : t('viewDeposits');
+
   // Newest first: the panel is a drill-down, so the most recent entry in the
   // period is the one being looked for.
   const ordered = React.useMemo(
@@ -87,7 +96,7 @@ export function DrillDownPanel({
           <SheetTitle className="text-base font-medium">{title}</SheetTitle>
           <SheetDescription className="flex items-center justify-between gap-4">
             <span className="text-muted-foreground">
-              {t('transactionCount', { count: records.length })}
+              {flowCaption} · {t('transactionCount', { count: records.length })}
             </span>
             <span className="tabular-nums font-semibold">
               <AmountDisplay value={total} currency={currency} isHidden={amountsHidden} />
@@ -113,7 +122,20 @@ export function DrillDownPanel({
                     <Icons.Calendar className="h-4 w-4 text-primary" />
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{formatDate(record.date)}</p>
+                    <p className="truncate text-sm font-medium">
+                      {formatDate(record.date)}
+                      {flow === 'net' && (
+                        <span
+                          className={
+                            record.flow === 'withdrawals'
+                              ? 'ml-2 text-destructive'
+                              : 'ml-2 text-muted-foreground'
+                          }
+                        >
+                          {record.flow === 'withdrawals' ? '−' : '+'}
+                        </span>
+                      )}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">{record.accountName}</p>
                   </div>
                 </div>

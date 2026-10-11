@@ -127,6 +127,26 @@ value for **every** account (zero included). That is what lets the chart render 
 stack: if a period were missing an account key, the segment order would change between
 columns.
 
+### Flows: deposits, withdrawals, net
+
+A `ContributionRecord` carries a `flow` (`'deposits' | 'withdrawals' | 'net'` — the union
+reuses the view name for the net case) and a **positive** `amount`. The sign is never stored:
+`signedAmount(record, flow)` applies it at read time, so no caller can double-negate and the
+drill-down can label each row with `+` / `−` straight from `record.flow`.
+
+`summarize` *signs* but does not *filter* — the callers must narrow with `selectFlow` first.
+The test `summarize signs withdrawals under the net view only` pins that contract.
+
+Intake reads only `DEPOSIT` and `WITHDRAWAL`. Transfers (`TRANSFER_IN` / `TRANSFER_OUT`) are
+counted in `byType` and then skipped in both directions: a move between the user's own accounts
+is not new money nor a real outflow, and counting it would doublecount both sides.
+
+Account scoping lives in `hooks/useAccountScope.ts`: `accounts.getAll()` decides which ids are
+investment or cash (`SECURITIES`, `CRYPTOCURRENCY`, `CASH`). A credit card is excluded —
+spending on it is not a withdrawal from savings. While the accounts bridge has not answered,
+the gate stays open so a slow bridge never blanks the page; if it answers, `unknown-account`
+rows (activities with no id) are kept **out** of a known scope.
+
 Both views share `buildPeriodAxis`, so the total and the split chart lay bars on exactly
 the same x-axis. `fillGaps` is a thin wrapper over it for the total view.
 

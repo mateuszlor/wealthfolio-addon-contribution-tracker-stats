@@ -5,12 +5,18 @@
  * reasoned about on its own.
  */
 
+
+/** Which money the page is showing at the moment. */
+export type Flow = 'deposits' | 'withdrawals' | 'net';
+
 export type Granularity = 'month' | 'day' | 'year';
 
 export interface ContributionRecord {
-  /** Moment the contribution was recorded. */
+  /** Kind of money movement: adding to, or taking out of, the account. */
+  flow: Flow;
+  /** Moment the contribution or withdrawal was recorded. */
   date: Date;
-  /** Positive contribution amount, in the record's own currency. */
+  /** Positive flow amount, in the record's own currency. */
   amount: number;
   /** ISO currency code the host recorded the amount in. */
   currency: string;
@@ -74,7 +80,42 @@ export function toDate(value: unknown): Date | undefined {
   return undefined;
 }
 
-export function summarize(records: ContributionRecord[]): Summary {
+/** Records behind one flow of the current view: kept, signed out, or both. */
+export function selectFlow(
+  records: ContributionRecord[],
+  flow: Flow,
+): ContributionRecord[] {
+  if (flow !== 'net') return records.filter((record) => record.flow === flow);
+  return records;
+}
+
+/**
+ * Signed value of one record for the ledger being displayed.
+ *
+ * All three views share one rule: money **added** is positive, money **taken
+ * out** is negative. That is what makes the withdrawals view draw its bars
+ * *below* the axis — a withdrawal is an outflow, so plotting it as a positive,
+ * upward-growing column read as growth, which is exactly what hid the bug the
+ * stacked view shipped with (one flow's bars drawn under the other's colour and
+ * direction).
+ *
+ * - `deposits`: the caller has narrowed to `flow === 'deposits'`, so every
+ *   record here is an inflow — signed up by construction.
+ * - `withdrawals`: the records are outflows — always negative.
+ * - `net`: both directions mixed, each record signed by its own flow.
+ */
+export function signedAmount(record: ContributionRecord, flow: Flow): number {
+  switch (flow) {
+    case 'deposits':
+      return record.amount;
+    case 'withdrawals':
+      return -record.amount;
+    case 'net':
+      return record.flow === 'withdrawals' ? -record.amount : record.amount;
+  }
+}
+
+export function summarize(records: ContributionRecord[], flow: Flow = 'deposits'): Summary {
   if (records.length === 0) {
     return { total: 0, count: 0, average: 0, monthlyAverage: 0 };
   }
@@ -84,7 +125,9 @@ export function summarize(records: ContributionRecord[]): Summary {
   let max = Number.NEGATIVE_INFINITY;
 
   for (const record of records) {
-    total += record.amount;
+    // The net ledger signs withdrawals out, so total, average and the chart all
+    // cancel deposits against withdrawals of the same period.
+    total += signedAmount(record, flow);
     const time = record.date.getTime();
     if (time < min) min = time;
     if (time > max) max = time;
@@ -140,26 +183,33 @@ export function periodKey(date: Date, granularity: Granularity): string {
   return formatKey(date, granularity);
 }
 
-/** Groups records into chronological buckets of the requested granularity. */
+/** Groups records into chronological buckets of the requested granularity.
+ *
+ * Under the net view a withdrawal contributes its *negative* total, so a
+ * bucket can total zero or below and `count` still counts both directions of
+ * money.
+ */
 export function bucketize(
   records: ContributionRecord[],
   granularity: Granularity,
   locale = 'en',
+  flow: Flow = 'deposits',
 ): Bucket[] {
   const buckets = new Map<string, Bucket>();
 
   for (const record of records) {
     const key = periodKey(record.date, granularity);
+    const signed = signedAmount(record, flow);
     const existing = buckets.get(key);
 
     if (existing) {
-      existing.total += record.amount;
+      existing.total += signed;
       existing.count += 1;
     } else {
       buckets.set(key, {
         key,
         label: labelFor(record.date, granularity, locale),
-        total: record.amount,
+        total: signed,
         count: 1,
       });
     }
@@ -311,6 +361,7 @@ export function bucketizeByAccount(
   records: ContributionRecord[],
   granularity: Granularity,
   locale = 'en',
+  flow: Flow = 'deposits',
   maxBuckets = 400,
 ): SplitResult {
   if (records.length === 0) return { accounts: [], buckets: [] };
@@ -322,6 +373,7 @@ export function bucketizeByAccount(
 
   for (const record of records) {
     const key = periodKey(record.date, granularity);
+    const signed = signedAmount(record, flow);
     const accountId =
       typeof record.accountId === 'string' && record.accountId
         ? record.accountId
@@ -338,13 +390,13 @@ export function bucketizeByAccount(
 
     const meta = accountMeta.get(accountId);
     if (meta) {
-      meta.total += record.amount;
+      meta.total += signed;
       // A later activity may carry the account name where an earlier one did not.
       if (meta.name === accountId && accountName !== accountId) {
         meta.name = accountName;
       }
     } else {
-      accountMeta.set(accountId, { name: accountName, total: record.amount });
+      accountMeta.set(accountId, { name: accountName, total: signed });
     }
 
     let row = cells.get(key);
@@ -352,7 +404,7 @@ export function bucketizeByAccount(
       row = new Map<string, number>();
       cells.set(key, row);
     }
-    row.set(accountId, (row.get(accountId) ?? 0) + record.amount);
+    row.set(accountId, (row.get(accountId) ?? 0) + signed);
   }
 
   keys.sort();
@@ -448,7 +500,7 @@ export function barClickToDrillDown(
 }
 
 /**
- * The deposits behind one bar of the chart.
+ * The deposits or withdrawals behind one bar of the chart, per the view flow.
  *
  * The selector owns the interval window rather than receiving an already-scoped
  * list. Bucket keys are only as narrow as the granularity, so on a partially
@@ -467,10 +519,13 @@ export function selectDrillDownRecords(
   window: DateWindow,
   selection: DrillDownSelection,
   granularity: Granularity,
+  flow: Flow = 'deposits',
 ): ContributionRecord[] {
   return filterByRange(records, window).filter((record) => {
     if (periodKey(record.date, granularity) !== selection.periodKey) return false;
     if (selection.accountId && record.accountId !== selection.accountId) return false;
+    // The net view lists both directions; the single-flow views list only theirs.
+    if (flow !== 'net' && record.flow !== flow) return false;
     return true;
   });
 }

@@ -4,18 +4,46 @@
  * Kept free of React and of the SDK so it can be regression tested directly.
  */
 
-import { toAmount, toDate, UNKNOWN_ACCOUNT, type ContributionRecord } from './contributions';
+import { toAmount, toDate, UNKNOWN_ACCOUNT, type ContributionRecord, type Flow } from './contributions';
 
 export const DEPOSIT = 'DEPOSIT';
+/** A withdrawal out of an investment or cash account. Not a transfer. */
+export const WITHDRAWAL = 'WITHDRAWAL';
 
+/**
+ * `TRANSFER_IN` / `TRANSFER_OUT` are deliberately **not** counted in either
+ * direction: a transfer between the user's own accounts is not new money
+ * arriving nor a real outflow, so counting it would doublecount on both sides
+ * of the page.
+ */
+
+/** Activity types the addon reads at all. Everything else is counted and skipped. */
+const FLOW_TYPES: Readonly<Record<string, Flow>> = {
+  [DEPOSIT]: 'deposits',
+  [WITHDRAWAL]: 'withdrawals',
+};
+
+/** Records behind one flow of the current view: kept, signed out, or both. */
+export function flowOf(activity: RawActivity): Flow | undefined {
+  const type = activity.activityTypeOverride ?? activity.activityType;
+  return typeof type === 'string' ? FLOW_TYPES[type.toUpperCase()] : undefined;
+}
+
+export function isDeposit(activity: RawActivity): boolean {
+  return flowOf(activity) === 'deposits';
+}
+
+/** Row counts the intake reports, so an unexpectedly empty chart is explainable. */
 export interface IntakeStats {
   /** Rows returned by the host. */
   fetched: number;
   /** Rows that were deposits. */
   deposits: number;
-  /** Deposits dropped because the date field was missing or unparseable. */
+  /** Rows that were withdrawals. */
+  withdrawals: number;
+  /** Flow rows dropped because the date field was missing or unparseable. */
   skippedNoDate: number;
-  /** Deposits dropped because the amount was zero. */
+  /** Flow rows dropped because the amount was zero. */
   skippedZeroAmount: number;
   /** activityType -> count, so a wrong filter is obvious in the log. */
   byType: Record<string, number>;
@@ -49,13 +77,16 @@ export interface Intake {
   stats: IntakeStats;
 }
 
-export function emptyIntakeStats(): IntakeStats {
-  return { fetched: 0, deposits: 0, skippedNoDate: 0, skippedZeroAmount: 0, byType: {} };
-}
 
-export function isDeposit(activity: RawActivity): boolean {
-  const type = activity.activityTypeOverride ?? activity.activityType;
-  return typeof type === 'string' && type.toUpperCase() === DEPOSIT;
+export function emptyIntakeStats(): IntakeStats {
+  return {
+    fetched: 0,
+    deposits: 0,
+    withdrawals: 0,
+    skippedNoDate: 0,
+    skippedZeroAmount: 0,
+    byType: {},
+  };
 }
 
 /**
@@ -126,8 +157,10 @@ export function toContributionRecords(activities: unknown): Intake {
     stats.fetched += 1;
     stats.byType[type] = (stats.byType[type] ?? 0) + 1;
 
-    if (!isDeposit(activity)) continue;
-    stats.deposits += 1;
+    const flow = flowOf(activity);
+    if (!flow) continue;
+    if (flow === 'deposits') stats.deposits += 1;
+    else stats.withdrawals += 1;
 
     const date = readDate(activity);
     if (!date) {
@@ -135,6 +168,8 @@ export function toContributionRecords(activities: unknown): Intake {
       continue;
     }
 
+    // Both directions stay positive in the record; the sign lives in `flow` and
+    // is applied by the ledger (`signedAmount`) so no caller can double-negate.
     const amount = Math.abs(toAmount(activity.amount));
     if (amount === 0) {
       stats.skippedZeroAmount += 1;
@@ -143,6 +178,7 @@ export function toContributionRecords(activities: unknown): Intake {
 
     const account = readAccount(activity);
     records.push({
+      flow,
       date,
       amount,
       currency: readCurrency(activity),
@@ -159,7 +195,7 @@ export function toContributionRecords(activities: unknown): Intake {
 /** Single-line diagnostic used in the addon log. */
 export function formatIntakeLog(stats: IntakeStats, kept: number): string {
   return (
-    `fetched=${stats.fetched} deposits=${stats.deposits} kept=${kept} ` +
+    `fetched=${stats.fetched} deposits=${stats.deposits} withdrawals=${stats.withdrawals} kept=${kept} ` +
     `skippedNoDate=${stats.skippedNoDate} skippedZeroAmount=${stats.skippedZeroAmount} ` +
     `types=${JSON.stringify(stats.byType)}`
   );

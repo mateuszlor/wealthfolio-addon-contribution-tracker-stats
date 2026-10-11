@@ -15,6 +15,7 @@ import {
   useAmountFormatting,
   useDateFormatting,
 } from '@wealthfolio/ui';
+import { useAccountScope } from '../hooks/useAccountScope';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { usePersistedWindow } from '../hooks/usePersistedWindow';
@@ -29,9 +30,13 @@ import {
   filterByRange,
   resolveAccountFromSeriesKey,
   selectDrillDownRecords,
+  selectFlow,
+  signedAmount,
   summarize,
+  type Flow,
   type Granularity,
 } from '../lib/contributions';
+import { scopeRecords } from '../hooks/useAccountScope';
 import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
@@ -41,6 +46,15 @@ export interface ContributionStatsPageProps {
 const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
 type SeriesMode = 'total' | 'account';
+
+/** The three ledgers of the flow switch, in display order. */
+const FLOWS: Flow[] = ['deposits', 'withdrawals', 'net'];
+
+const FLOW_LABEL_KEY: Record<Flow, string> = {
+  deposits: 'viewDeposits',
+  withdrawals: 'viewWithdrawals',
+  net: 'viewNet',
+};
 
 /** Labels the hero, matching the spending reports' small caps. */
 const HERO_LABEL_CLASS =
@@ -81,12 +95,20 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // one concrete month. Persisted in the same bridge as the privacy toggle.
   const { selection, range, setInterval, setMonth } = usePersistedWindow(ctx);
 
+  // Investment and cash accounts only: the two account groups the flow ledger
+  // is meaningful for. Credit-card rows never reach the aggregation below.
+  const { includedIds } = useAccountScope(ctx);
+
   // `locale` only labels the buckets now; amounts and dates come from the host
   // formatters above. Regional aliases are already normalised by the SDK.
   const locale = language || 'en';
   const { loading, error, records, granularity, setGranularity } = useContributions(ctx, locale);
 
   const [seriesMode, setSeriesMode] = React.useState<SeriesMode>('total');
+  // Which ledger the page shows: deposits, withdrawals, or the signed net of
+  // both. Layout mirrors the visibility switch so the meaning of every other
+  // control on the page is now "of the selected flow".
+  const [flow, setFlow] = React.useState<Flow>('deposits');
   const [drillDown, setDrillDown] = React.useState<{
     periodKey: string;
     periodLabel: string;
@@ -109,18 +131,25 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const autoCurrency = React.useMemo(() => {
     const totals = new Map<string, number>();
     for (const record of records) {
-      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.amount);
+      const signed = signedAmount(record, flow);
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + signed);
     }
-    const best = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0];
+    // Largest by absolute volume, so a dominant withdrawal currency also wins.
+    const best = Array.from(totals.entries()).sort(
+      (a, b) => Math.abs(b[1]) - Math.abs(a[1]),
+    )[0];
     return best?.[0] ?? 'PLN';
-  }, [records]);
+  }, [records, flow]);
 
   const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
   const currency = currencyChoice ?? autoCurrency;
 
   const currencyRecords = React.useMemo(
-    () => records.filter((record) => record.currency === currency),
-    [records, currency],
+    () => scopeRecords(
+      records.filter((record) => record.currency === currency),
+      includedIds,
+    ),
+    [records, currency, includedIds],
   );
 
   // The earliest month with a deposit in this currency, bounding the month
@@ -169,21 +198,69 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     () => filterByRange(currencyRecords, range),
     [currencyRecords, range],
   );
-  const stats = React.useMemo(() => summarize(scoped), [scoped]);
-  const buckets = React.useMemo(
-    () => fillGaps(bucketize(scoped, granularity, locale), granularity, locale),
-    [scoped, granularity, locale],
+
+  // Which flows exist in the window decides whether the switches mean anything.
+  const hasWithdrawals = React.useMemo(
+    () => scoped.some((record) => record.flow === 'withdrawals'),
+    [scoped],
+  );
+  const hasDeposits = React.useMemo(
+    () => scoped.some((record) => record.flow === 'deposits'),
+    [scoped],
   );
 
+  // A ledger with nothing on its side of the switch is a misleading panel: the
+  // view falls back to what exists rather than rendering an empty chart.
+  const effectiveFlow: Flow =
+    flow === 'withdrawals' && !hasWithdrawals ? (hasDeposits ? 'deposits' : 'net')
+    : flow === 'net' && !hasWithdrawals && !hasDeposits ? 'net'
+    : flow;
+
+  // `summarize` signs but does not filter, so the single-flow views get exactly
+  // their side of the ledger first; the net view keeps both.
+  const flowRecords = React.useMemo(
+    () => selectFlow(scoped, effectiveFlow),
+    [scoped, effectiveFlow],
+  );
+
+  const stats = React.useMemo(
+    () => summarize(flowRecords, effectiveFlow),
+    [flowRecords, effectiveFlow],
+  );
+  const buckets = React.useMemo(
+    () =>
+      fillGaps(
+        bucketize(
+          flowRecords,
+          granularity,
+          locale,
+          effectiveFlow,
+        ),
+        granularity,
+        locale,
+      ),
+    [flowRecords, granularity, locale, effectiveFlow],
+  );
+
+  // The split carries both flows under the net lead, so each bucket holds the
+  // signed value of its account for the period. It takes the *filtered*
+  // `flowRecords`, not `scoped`: under the deposits or withdrawals view an
+  // unfiltered list leaks the opposite flow into the stack, which is exactly
+  // how the withdrawals chart ended up reading deposits' bars.
   const split = React.useMemo(
-    () => bucketizeByAccount(scoped, granularity, locale),
-    [scoped, granularity, locale],
+    () => bucketizeByAccount(flowRecords, granularity, locale, effectiveFlow),
+    [flowRecords, granularity, locale, effectiveFlow],
   );
 
   // Splitting is meaningless with a single account, so the control only appears
   // once there is something to split.
   const canSplit = split.accounts.length > 1;
   const splitMode: SeriesMode = canSplit && seriesMode === 'account' ? 'account' : 'total';
+
+  // The withdrawals ledger reads as spending, not growth: the chart palette
+  // shifts so the bars do not read as "money added". The net view keeps the
+  // contributory green, because its bars stay meaningful in both directions.
+  const chartColorOffset = effectiveFlow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
   const { rows, series } = React.useMemo(() => {
     if (splitMode === 'account') {
@@ -208,12 +285,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       series: [
         {
           dataKey: 'total',
-          label: t('totalContributions'),
-          ...seriesColor(0),
+          label:
+            effectiveFlow === 'withdrawals' ? t('viewWithdrawals')
+              : effectiveFlow === 'net' ? t('netFlow')
+              : t('totalContributions'),
+          ...seriesColor(chartColorOffset),
         },
       ],
     };
-  }, [splitMode, split, buckets, t]);
+  }, [splitMode, split, buckets, t, effectiveFlow]);
 
   // Toggling back to the total view after splitting is the expected round trip.
   React.useEffect(() => {
@@ -257,20 +337,20 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // change re-reads the new range rather than showing the old one's deposits.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, splitMode, currency]);
+  }, [granularity, splitMode, currency, effectiveFlow]);
 
-  // The panel must list exactly the deposits the clicked bar is built from, so
+  // The panel must list exactly the flows the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the
   // window rather than an already-scoped list, so the two cannot drift apart and
   // a test can cover the scoping instead of trusting this call site.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity);
-  }, [drillDown, currencyRecords, range, granularity]);
+    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, effectiveFlow);
+  }, [drillDown, currencyRecords, range, granularity, effectiveFlow]);
 
   const drillDownTotal = React.useMemo(
-    () => drillDownRecords.reduce((sum, r) => sum + r.amount, 0),
-    [drillDownRecords],
+    () => drillDownRecords.reduce((sum, r) => sum + signedAmount(r, effectiveFlow), 0),
+    [drillDownRecords, effectiveFlow],
   );
 
   const rangeLabel =
@@ -286,7 +366,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       <section className="rounded-xl border bg-card p-4 shadow-xs md:p-5">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className={HERO_LABEL_CLASS}>{t('totalContributions')}</p>
+            <p className={HERO_LABEL_CLASS}>
+              {effectiveFlow === 'withdrawals' ? t('totalWithdrawn')
+                : effectiveFlow === 'net' ? t('netFlow')
+                : t('totalContributions')}
+            </p>
             {/* The host mask is shorter than a real total, so the slot keeps a
                 minimum width and toggling does not shift the block. */}
             <p className="tabular-nums min-w-[9ch] text-3xl font-bold">
@@ -298,17 +382,27 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           <div className="flex items-start gap-4">
             <dl className="flex gap-6 text-right">
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('contributionCount')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {effectiveFlow === 'withdrawals' ? t('withdrawalCount') : t('contributionCount')}
+                </dt>
                 <dd className="tabular-nums font-semibold">{stats.count}</dd>
               </div>
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('averagePerDeposit')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {effectiveFlow === 'withdrawals'
+                    ? t('averagePerWithdrawal')
+                    : effectiveFlow === 'net'
+                      ? t('averagePerDeposit')
+                      : t('averagePerDeposit')}
+                </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay value={stats.average} currency={currency} isHidden={amountsHidden} />
                 </dd>
               </div>
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('averageMonthly')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {effectiveFlow === 'net' ? t('netMonthly') : t('averageMonthly')}
+                </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay
                     value={stats.monthlyAverage}
@@ -388,6 +482,31 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             </Tabs>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* The three ledgers: deposits, withdrawals and their signed net.
+              Shown once the records include any withdrawal; a ledger of deposits
+              alone has no second side to switch to. */}
+              {hasWithdrawals && (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  value={effectiveFlow}
+                  onValueChange={(value) => {
+                    if (value) setFlow(value as Flow);
+                  }}
+                >
+                  {FLOWS.map((value) => (
+                    <ToggleGroupItem
+                      key={value}
+                      value={value}
+                      variant="outline"
+                      aria-label={t(FLOW_LABEL_KEY[value])}
+                    >
+                      {t(FLOW_LABEL_KEY[value])}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              )}
+
               {currencies.length > 1 && (
                 <ToggleGroup
                   type="single"
@@ -434,6 +553,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 series={series}
                 formatValue={displayValue}
                 formatTick={formatTick}
+                colorOffset={chartColorOffset}
                 hideAxis={amountsHidden}
                 onBarClick={handleBarClick}
               />
@@ -450,6 +570,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         records={drillDownRecords}
         periodLabel={drillDown?.periodLabel ?? ''}
         accountName={drillDown?.accountName}
+        flow={effectiveFlow}
         total={drillDownTotal}
         currency={currency}
         amountsHidden={amountsHidden}

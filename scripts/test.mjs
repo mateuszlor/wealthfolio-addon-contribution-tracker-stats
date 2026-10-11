@@ -176,13 +176,67 @@ test('tolerates a non-array payload', () => {
   assert.deepEqual(intake.toContributionRecords({}).records, []);
 });
 
+/* ------------------------------------------------------------- flows */
+
+test('a WITHDRAWAL activity becomes a withdrawals record', () => {
+  const { records, stats } = intake.toContributionRecords([
+    {
+      activityType: 'WITHDRAWAL',
+      date: '2026-02-10T00:00:00Z',
+      amount: '500',
+      currency: 'PLN',
+    },
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].flow, 'withdrawals');
+  assert.equal(records[0].amount, 500, 'the amount stays positive; the sign lives in flow');
+  assert.equal(stats.withdrawals, 1);
+  assert.equal(stats.deposits, 0);
+});
+
+test('TRANSFER_OUT is never counted as a withdrawal', () => {
+  // The regression guard for the definitional choice: a transfer between the
+  // user's own accounts is not money leaving the ledger.
+  const { records, stats } = intake.toContributionRecords([
+    { activityType: 'TRANSFER_OUT', date: '2026-02-10T00:00:00Z', amount: '500' },
+    { activityType: 'TRANSFER_IN', date: '2026-02-10T00:00:00Z', amount: '500' },
+  ]);
+
+  assert.equal(records.length, 0);
+  assert.equal(stats.withdrawals, 0);
+  assert.equal(stats.deposits, 0);
+  assert.equal(stats.byType.TRANSFER_OUT, 1, 'still counted, so a wrong filter is visible');
+});
+
+test('activityTypeOverride can turn a row into a withdrawal', () => {
+  const { records } = intake.toContributionRecords([
+    { activityType: 'BUY', activityTypeOverride: 'WITHDRAWAL', date: '2026-02-10T00:00:00Z', amount: '100' },
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].flow, 'withdrawals');
+});
+
+test('deposits and withdrawals produce records in one pass', () => {
+  const { records, stats } = intake.toContributionRecords([
+    { activityType: 'DEPOSIT', date: '2026-01-05T00:00:00Z', amount: '100' },
+    { activityType: 'WITHDRAWAL', date: '2026-01-20T00:00:00Z', amount: '40' },
+  ]);
+
+  assert.equal(records.length, 2);
+  assert.equal(stats.deposits, 1);
+  assert.equal(stats.withdrawals, 1);
+});
+
 /* ----------------------------------------------------------- contributions */
 
 const { mod: contributions, cleanup: cleanupContributions } = await loadTs('src/lib/contributions.ts');
 
-const record = (iso, amount, account = 'acc-1', accountName = 'Main') => ({
+const record = (iso, amount, account = 'acc-1', accountName = 'Main', flow = 'deposits') => ({
   date: new Date(iso),
   amount,
+  flow,
   accountId: account,
   accountName: accountName || account,
 });
@@ -746,6 +800,44 @@ test('the drill-down is empty for a period with no deposits', () => {
   );
 });
 
+/**
+ * The regression the host exposed: the per-account split was fed the whole,
+ * unfiltered `scoped` list, so under the withdrawals view the stacked chart
+ * summed deposits into the bars while the drill-down panel (which filters by
+ * flow) listed withdrawals. The bar and the panel disagreed by construction.
+ *
+ * The page now calls `bucketizeByAccount` on `flowRecords`, not `scoped`.
+ * This test pins the composition the page must use.
+ */
+test('the per-account split under one flow sees only that flow', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+    record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+  ];
+
+  const flowRecords = contributions.selectFlow(records, 'withdrawals');
+  const split = contributions.bucketizeByAccount(flowRecords, 'month', 'en', 'withdrawals');
+
+  assert.deepEqual(
+    split.accounts.map((a) => a.id),
+    ['b'],
+    'the withdrawals view must not carry a deposits series',
+  );
+  // A withdrawal is an outflow: the bar for it must read *below* the axis.
+  assert.equal(split.buckets[0].total, -40);
+
+  // Conversely, feeding the unfiltered list is exactly the shape the bug had:
+  // kept explicit so a revert that "works" is recognised as the old behaviour.
+  const unfiltered = contributions.bucketizeByAccount(records, 'month', 'en', 'withdrawals');
+  // Signed the new way, deposits (+100) outweigh the withdrawal (−40), so the
+  // magnitude ordering puts 'a' first — the accounts themselves are the pin.
+  assert.deepEqual(
+    unfiltered.accounts.map((a) => a.id).sort(),
+    ['a', 'b'],
+    'unfiltered input yields both flows — the shape the bug had',
+  );
+});
+
 test('a series key resolves to the account behind it', () => {
   const accounts = [
     { id: 'acc-1', name: 'Main' },
@@ -826,6 +918,192 @@ test('an unresolvable series key opens no panel at all', () => {
     ),
     undefined,
   );
+});
+
+/* ------------------------------------------------------- flows aggregate */
+
+test('summarize signs withdrawals under the net view only', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  // `summarize` signs the ledger but does not filter it: the caller narrows to
+  // one flow first (`selectFlow`), which is what the page does.
+  const depositsOnly = contributions.selectFlow(records, 'deposits');
+  const withdrawalsOnly = contributions.selectFlow(records, 'withdrawals');
+
+  assert.equal(contributions.summarize(depositsOnly, 'deposits').total, 100);
+  // Under this ledger a withdrawal is an outflow: negative, not just a colour.
+  assert.equal(contributions.summarize(withdrawalsOnly, 'withdrawals').total, -40);
+  assert.equal(contributions.summarize(records, 'net').total, 60);
+});
+
+// The regression this pins: the old code summarised `record.amount` unconditionally,
+// so switching the switch to Net left the hero reading 140 instead of 60 — a
+// "withdrawal-proof" chart that ignored withdrawals.
+test('the net total is not the deposits total with withdrawals present', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 1000),
+    record('2026-02-05T00:00:00Z', 250, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const net = contributions.summarize(records, 'net');
+  assert.notEqual(net.total, contributions.summarize(records, 'deposits').total);
+  assert.equal(net.total, 750);
+});
+
+test('bucketize totals signed under the net view', () => {
+  const buckets = contributions.bucketize(
+    [
+      record('2026-01-05T00:00:00Z', 100),
+      record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+      record('2026-02-02T00:00:00Z', 70),
+    ],
+    'month',
+    'en',
+    'net',
+  );
+
+  assert.equal(buckets[0].total, 60);
+  assert.equal(buckets[1].total, 70);
+  assert.equal(buckets[0].count, 2, 'count counts both directions');
+});
+
+test('bucketizeByAccount signs per account under the net view', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+      record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+    ],
+    'month',
+    'en',
+    'net',
+  );
+
+  assert.equal(result.buckets[0].values.a, 100);
+  assert.equal(result.buckets[0].values.b, -40);
+  assert.equal(result.buckets[0].total, 60);
+  assert.deepEqual(
+    result.accounts.map((a) => a.id),
+    ['a', 'b'],
+    'ordering still by contribution magnitude',
+  );
+});
+
+test('the drill-down under net lists both directions', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const january = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'net',
+  );
+
+  assert.equal(january.length, 2, 'net mixes both flows in one panel');
+  assert.equal(
+    january.reduce((sum, r) => sum + contributions.signedAmount(r, 'net'), 0),
+    60,
+  );
+
+  const depositsOnly = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'deposits',
+  );
+  assert.equal(depositsOnly.length, 1);
+});
+
+test('the withdrawal view drills into withdrawals only', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const panel = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'withdrawals',
+  );
+
+  assert.equal(panel.length, 1);
+  assert.equal(panel[0].amount, 40);
+});
+
+/**
+ * The regression: withdrawals drew as positive, upward bars — visually
+ * indistinguishable from "money added", only in another colour. An outflow
+ * reads correctly only when its bars hang *below* the axis, so `signedAmount`
+ * signs the whole ledger, not just the net view.
+ */
+test('a withdrawals bucket is negative: the bar goes below the axis', () => {
+  const flowRecords = contributions.selectFlow(
+    [record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals')],
+    'withdrawals',
+  );
+
+  const bucket = contributions.bucketize(flowRecords, 'month', 'en', 'withdrawals')[0];
+  assert.ok(bucket.total < 0, `expected a negative total, got ${bucket.total}`);
+  assert.equal(bucket.total, -40);
+
+  // The per-account split agrees, so stacked withdrawals also hang below.
+  const split = contributions.bucketizeByAccount(flowRecords, 'month', 'en', 'withdrawals');
+  assert.equal(split.buckets[0].total, -40);
+
+  // Deposits keep the old, positive shape.
+  const deposit = contributions.bucketize(
+    [record('2026-01-05T00:00:00Z', 100)],
+    'month',
+    'en',
+    'deposits',
+  )[0];
+  assert.equal(deposit.total, 100);
+});
+
+/* ---------------------------------------------------------- account scope */
+
+const { mod: accountScope, cleanup: cleanupAccountScope } = await loadTs('src/hooks/useAccountScope.ts');
+
+test('included account types are investment and cash, never credit cards', () => {
+  assert.ok(accountScope.isIncludedAccountType('SECURITIES'));
+  assert.ok(accountScope.isIncludedAccountType('CRYPTOCURRENCY'));
+  assert.ok(accountScope.isIncludedAccountType('CASH'));
+  assert.ok(accountScope.isIncludedAccountType('securities'), 'case-insensitive');
+
+  assert.equal(accountScope.isIncludedAccountType('CREDIT_CARD'), false);
+  assert.equal(accountScope.isIncludedAccountType(undefined), false);
+  assert.equal(accountScope.isIncludedAccountType(''), false);
+});
+
+test('scopeRecords filters out excluded accounts and keeps the rest', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+
+  assert.deepEqual(
+    accountScope.scopeRecords(records, ['broker']).map((r) => r.accountId),
+    ['broker'],
+  );
+  // The gate is open while the accounts bridge has not answered yet, so a slow
+  // bridge never blanks the page.
+  assert.equal(accountScope.scopeRecords(records, undefined).length, 2);
+});
+
+test('scopeRecords keeps unknown-account records out of a known scope', () => {
+  // An activity without an account id collapses into `unknown-account`; when the
+  // scope is known, that row cannot claim to belong to it.
+  const records = [record('2026-01-05T00:00:00Z', 100, 'unknown-account')];
+  assert.equal(accountScope.scopeRecords(records, ['broker']).length, 0);
 });
 
 /* --------------------------------------------------------------------- run */

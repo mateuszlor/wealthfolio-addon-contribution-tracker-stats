@@ -1244,11 +1244,33 @@ test('the page has no alternate ledger to fall back to', async () => {
     /\{\(hasWithdrawals \|\| flow !== 'deposits'\) && \(/,
     "the flow switch must survive an empty range in BOTH directions, or the user is stranded",
   );
+  assert.match(source, /\{canSplit && \(/, 'the per-account switch must be rendered');
+
+  // The guards above were not enough on their own, and that is the lesson worth
+  // keeping: v1.2.7 shipped a guard on both switches and both still vanished on
+  // the host, because the *guard* was right and the value behind it was still
+  // window-scoped. Assert the source of the capability checks, not their use.
+  const declaration = (name) => {
+    const at = source.indexOf(`const ${name}`);
+    assert.ok(at >= 0, `${name} must exist`);
+    return source.slice(at, at + 260);
+  };
+
+  const withdrawals = declaration('hasWithdrawals');
   assert.match(
-    source,
-    /\{showSplit && \(/,
-    'the per-account switch must survive an empty range while it is in use',
+    withdrawals,
+    /records\.some/,
+    'a second ledger existing is a property of the data, not of the window',
   );
+  assert.doesNotMatch(withdrawals, /scoped\.some/, 'the window must not decide what ledgers exist');
+
+  const split = declaration('canSplit');
+  assert.match(
+    split,
+    /records\.map/,
+    'having more than one account is a property of the data, not of the window',
+  );
+  assert.doesNotMatch(split, /split\.accounts/, 'the window must not decide what ledgers exist');
 
   // ...and the effect that used to cancel that fix in the next commit. It reset
   // the mode to `total` the moment `canSplit` went false, which is what deleted

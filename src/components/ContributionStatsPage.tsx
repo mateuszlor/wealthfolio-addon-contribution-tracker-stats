@@ -201,12 +201,19 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [currencyRecords, range],
   );
 
-  // Which flows exist in the window decides whether the switches mean anything.
-  // Withdrawals anywhere in the window is what gives the flow switch a reason to
-  // exist: a ledger of deposits alone has no second side to switch to.
+  // Which flows exist decides whether the flow switch means anything: a ledger of
+  // deposits alone has no second side to switch to.
+  //
+  // This reads the **loaded records, not the window**. It used to read `scoped`,
+  // and that was the bug in two directions: narrowing the range emptied the
+  // window, `hasWithdrawals` went false, and the switch the user was holding
+  // disappeared. Whether a *second ledger exists at all* is a property of the
+  // data, not of the period being viewed — the period decides whether that
+  // ledger has anything to show, which is a separate question and is answered by
+  // rendering an empty chart, not by deleting the control that reaches it.
   const hasWithdrawals = React.useMemo(
-    () => scoped.some((record) => record.flow === 'withdrawals'),
-    [scoped],
+    () => records.some((record) => record.flow === 'withdrawals'),
+    [records],
   );
 
   // Everything below aggregates the flow the user picked, `flow`, with no
@@ -252,18 +259,23 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [flowRecords, granularity, locale, flow],
   );
 
-  // Splitting is meaningless with a single account, so the control only appears
-  // once there is something to split — **or once the user has asked for it**.
-  //
-  // Gating on `split.accounts.length` alone deleted the switch under the user:
-  // narrow the range to a period with no records and `split.accounts` empties,
-  // `canSplit` goes false, and the control the user was holding vanishes. They
-  // are left in per-account mode with no way to leave it and nothing on screen
-  // saying why. `showSplit` keeps it mounted while the selection is `account`,
-  // so the empty window shows an empty chart instead of a missing control.
-  const canSplit = split.accounts.length > 1;
-  const showSplit = canSplit || seriesMode === 'account';
-  const splitMode: SeriesMode = canSplit && seriesMode === 'account' ? 'account' : 'total';
+  // Splitting needs more than one account, so the control only appears once there
+  // is something to split — and that is counted over the **loaded records**, not
+  // the window. Gating on `split.accounts` (window-scoped) deleted the switch
+  // the user was holding the moment they narrowed the range to a period with no
+  // records, stranding them in per-account mode with no way out. Same root cause
+  // as the flow switch above: capability is a property of the data, emptiness is
+  // a property of the period.
+  const canSplit = React.useMemo(
+    () => new Set(records.map((record) => record.accountId)).size > 1,
+    [records],
+  );
+
+  // The user's selection is honoured even when the window holds nothing to split.
+  // An empty per-account chart is the honest rendering of an empty period; the
+  // alternative — quietly falling back to the total view — is the silent swap
+  // this page stopped doing for ledgers, and it would be worse here.
+  const splitMode: SeriesMode = seriesMode;
 
   // The withdrawals ledger reads as spending, not growth: the chart palette
   // shifts so the bars do not read as "money added". The net view keeps the
@@ -550,11 +562,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 </ToggleGroup>
               )}
 
-              {showSplit && (
+              {canSplit && (
                 <ToggleGroup
                   type="single"
                   size="sm"
-                  value={seriesMode}
+                  value={splitMode}
                   onValueChange={(value) => {
                     if (value) setSeriesMode(value as SeriesMode);
                   }}

@@ -1230,6 +1230,21 @@ test('the page has no alternate ledger to fall back to', async () => {
     assert.ok(match, `${fn} must be called`);
     assert.equal(match[1], 'flow', `${fn} must aggregate the picked flow, not another one`);
   }
+
+  // Regression, found by reading the shipped diff rather than a test run: a
+  // mutation pass restored this file from `HEAD~1`, which silently reverted the
+  // switch-visibility guard and the empty-state wording below. Both are visible
+  // only in this component, so both need a source-level contract.
+  assert.match(
+    source,
+    /\{\(hasWithdrawals \|\| flow === 'withdrawals'\) && \(/,
+    'the flow switch must survive a range with no withdrawals, or the user is stranded',
+  );
+  assert.match(
+    source,
+    /flow === 'withdrawals' \? t\('noWithdrawals'\) : t\('noContributions'\)/,
+    'an empty ledger must say which ledger is empty',
+  );
 });
 
 test('a ledger with nothing in it stays empty, it is never swapped for another', () => {

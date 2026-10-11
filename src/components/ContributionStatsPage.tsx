@@ -496,8 +496,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             <div className="flex flex-wrap items-center gap-3">
               {/* The three ledgers: deposits, withdrawals and their signed net.
               Shown once the records include any withdrawal; a ledger of deposits
-              alone has no second side to switch to. */}
-              {hasWithdrawals && (
+              alone has no second side to switch to. Stays up while the user is
+              on the withdrawals ledger even in a window that has none: without
+              this, narrowing the range would delete the switch they are holding
+              and strand them on an empty view they cannot leave. Nothing here
+              changes the selection — an empty ledger stays empty. */}
+              {(hasWithdrawals || flow === 'withdrawals') && (
                 <ToggleGroup
                   type="single"
                   size="sm"
@@ -557,7 +561,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           </div>
 
           {rows.length === 0 ? (
-            <p className="mt-4 text-muted-foreground text-sm">{t('noContributions')}</p>
+            // Says which ledger is empty. "No contributions" under a withdrawals
+            // heading answers a question nobody asked.
+            <p className="mt-4 text-muted-foreground text-sm">
+              {flow === 'withdrawals' ? t('noWithdrawals') : t('noContributions')}
+            </p>
           ) : (
             <div className="mt-4">
               <ContributionChart

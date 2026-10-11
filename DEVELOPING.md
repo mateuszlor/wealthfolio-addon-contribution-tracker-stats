@@ -137,14 +137,18 @@ drill-down can label each row with `+` / `−` straight from `record.flow`.
 `summarize` *signs* but does not *filter* — the callers must narrow with `selectFlow` first.
 The test `summarize signs withdrawals under the net view only` pins that contract.
 
-`resolveEffectiveFlow(requested, hasDeposits, hasWithdrawals)` is the one place the view is
-allowed to move without the user asking. It exists because a ledger with nothing on its side is
-a misleading panel, and it only ever fires for `withdrawals` — `deposits` showing an empty chart
-is honest, a ledger that quietly swapped is not. A result different from `requested` is the
-signal for the page to render the `flowFallback` caption, and the flow switch stays mounted
-while the user is on withdrawals so narrowing the range cannot strand them on a view they did
-not pick. `effectiveFlow` (not `flow`) is what feeds the hero, the buckets, the split and the
-drill-down, so the caption is describing the figures actually on screen.
+**The view is never swapped.** A ledger with nothing on its side of the switch shows an empty
+chart with an empty-state message naming that ledger — it does **not** fall back to a side that
+has records. An earlier revision resolved this through an `effectiveFlow` fallback, on the
+theory that an empty panel is a misleading panel; it was worse than the problem. It relabelled
+the hero total, the buckets, the split and the drill-down behind the user's back, so a viewer
+who asked for withdrawals was reading deposits. There is no `resolveEffectiveFlow` in the lib and
+the test `a ledger with nothing in it stays empty, it is never swapped for another` pins the
+contract that replaced it.
+
+The flow switch stays mounted while the user is on the withdrawals ledger, even in a window
+that has none. Gating it on `hasWithdrawals` alone meant narrowing the range deleted the control
+the user was holding and stranded them on an empty view they could not leave.
 
 Intake reads only `DEPOSIT` and `WITHDRAWAL`. Transfers (`TRANSFER_IN` / `TRANSFER_OUT`) are
 counted in `byType` and then skipped in both directions: a move between the user's own accounts

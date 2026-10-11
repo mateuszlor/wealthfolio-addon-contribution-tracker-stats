@@ -115,32 +115,6 @@ export function signedAmount(record: ContributionRecord, flow: Flow): number {
   }
 }
 
-/**
- * The ledger the page can actually show, given what the window holds.
- *
- * A ledger with nothing on its side of the switch is a misleading panel, so a
- * request the window cannot satisfy falls back to a ledger that does have
- * records. The fallback is **silent by construction** — nothing in the data
- * moves the switch — which is why the page also has to say so: a result other
- * than `requested` is precisely the signal to render the explanation.
- *
- * Only `withdrawals` falls back. `deposits` keeps an empty chart when the window
- * holds none: empty is honest, and a viewer that swapped ledgers silently would
- * read as a figure it is not.
- */
-export function resolveEffectiveFlow(
-  requested: Flow,
-  hasDeposits: boolean,
-  hasWithdrawals: boolean,
-): Flow {
-  if (requested === 'withdrawals' && !hasWithdrawals) {
-    // Nothing to withdraw: show the side of the ledger that exists, or the
-    // signed net if neither does.
-    return hasDeposits ? 'deposits' : 'net';
-  }
-  return requested;
-}
-
 export function summarize(records: ContributionRecord[], flow: Flow = 'deposits'): Summary {
   if (records.length === 0) {
     return { total: 0, count: 0, average: 0, monthlyAverage: 0 };

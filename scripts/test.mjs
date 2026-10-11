@@ -1205,36 +1205,59 @@ test('the gate is open, but not ready, before the bridge answers', () => {
   assert.equal(state.degraded, false, 'loading is not a degraded bridge');
 });
 
-/* ------------------------------------------------------- flow fallback */
+/* ------------------------------------------------- no silent ledger swap */
 
-test('resolveEffectiveFlow falls back only for a withdrawals view with nothing to show', () => {
-  const { resolveEffectiveFlow } = contributions;
+test('the page has no alternate ledger to fall back to', async () => {
+  // The silent swap lived in the *component*, so no test over the pure modules
+  // could see it — the mutation run put a fallback straight back into
+  // `ContributionStatsPage.tsx` and all 78 tests stayed green. Asserting it at
+  // the source level is the only place the decision is made.
+  //
+  // Comments are stripped first: this file documents the fallback in prose on
+  // purpose, and the ban below is about code, not about the word appearing.
+  const raw = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
-  // The fallback the page has to explain: withdrawals asked for, none in range.
-  assert.equal(resolveEffectiveFlow('withdrawals', true, false), 'deposits');
-  // Neither side present: the signed net is the only ledger that can exist.
-  assert.equal(resolveEffectiveFlow('withdrawals', false, false), 'net');
-
-  // Satisfiable, or any other request: the switch never moves on its own.
-  assert.equal(resolveEffectiveFlow('withdrawals', true, true), 'withdrawals');
-  assert.equal(resolveEffectiveFlow('deposits', true, false), 'deposits');
-  assert.equal(resolveEffectiveFlow('deposits', false, false), 'deposits');
-  assert.equal(resolveEffectiveFlow('net', true, false), 'net');
-  assert.equal(resolveEffectiveFlow('net', false, false), 'net');
+  // Every aggregation reads the state the user picked. `flow` is the one name
+  // the hero, the buckets, the split and the drill-down are allowed to use.
+  for (const [fn, call] of [
+    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/],
+    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/],
+    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/],
+    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/],
+  ]) {
+    const match = source.match(call);
+    assert.ok(match, `${fn} must be called`);
+    assert.equal(match[1], 'flow', `${fn} must aggregate the picked flow, not another one`);
+  }
 });
 
-test('a fallback changes what the page reports, not only which ledger is drawn', () => {
-  // The fallback is what makes the caption worth rendering: the hero total,
-  // the bucket totals and the drill-down all read from `effectiveFlow`, so a
-  // silent switch would relabel every figure on the page.
-  const records = [record('2026-01-05T00:00:00Z', 40, 'broker', 'Broker', 'withdrawals')];
-  const shown = contributions.resolveEffectiveFlow('withdrawals', false, false);
+test('a ledger with nothing in it stays empty, it is never swapped for another', () => {
+  // Regression: the page used to resolve an unsatisfiable view through an
+  // `effectiveFlow` fallback, so asking for withdrawals in a window that had
+  // none silently rendered the deposits ledger instead — the hero total, the
+  // buckets, the split and the drill-down all relabelled behind the user's back.
+  //
+  // There is deliberately no `resolveEffectiveFlow` in the lib any more. What is
+  // pinned here is the contract it used to break: narrowing to the ledger the
+  // user picked yields that ledger's own records and nothing else.
+  const depositsOnly = [record('2026-01-05T00:00:00Z', 100, 'broker', 'Broker', 'deposits')];
 
-  assert.notEqual(shown, 'withdrawals');
-  assert.equal(
-    contributions.summarize(contributions.selectFlow(records, shown), shown).total,
-    -40,
+  assert.deepEqual(
+    contributions.selectFlow(depositsOnly, 'withdrawals'),
+    [],
+    'the withdrawals view of a deposits-only window is empty, not the deposits',
   );
+  assert.deepEqual(contributions.selectFlow(depositsOnly, 'deposits'), depositsOnly);
+
+  // And the empty ledger aggregates to an empty panel rather than borrowing a total.
+  const shown = contributions.selectFlow(depositsOnly, 'withdrawals');
+  assert.equal(contributions.summarize(shown, 'withdrawals').total, 0);
+  assert.deepEqual(contributions.bucketize(shown, 'month', 'en', 'withdrawals'), []);
+  assert.deepEqual(contributions.bucketizeByAccount(shown, 'month', 'en', 'withdrawals'), {
+    accounts: [],
+    buckets: [],
+  });
 });
 
 /* --------------------------------------------------------------------- run */

@@ -42,7 +42,7 @@ export const translations: Record<string, AddonTranslationBundle> = {
     barredByScope: 'Investment and cash accounts only — credit cards excluded',
     scopeUnavailable:
       'Account types could not be read — credit card activity may be included',
-    flowFallback: 'No {{requested}} in this period — showing {{shown}} instead.',
+    noWithdrawals: 'No withdrawals in this period.',
     loading: 'Loading contributions...',
     loadError: 'Could not load activities: {{message}}',
     chartAxis: 'Contributions',
@@ -92,7 +92,7 @@ export const translations: Record<string, AddonTranslationBundle> = {
     barredByScope: 'Tylko konta inwestycyjne i gotówkowe — karty kredytowe wyłączone',
     scopeUnavailable:
       'Nie udało się odczytać typów kont — aktywność kart kredytowych może być wliczona',
-    flowFallback: 'Brak: {{requested}} w tym okresie — pokazujemy {{shown}}.',
+    noWithdrawals: 'Brak wypłat w tym okresie.',
     loading: 'Wczytywanie wpłat...',
     loadError: 'Nie udało się wczytać aktywności: {{message}}',
     chartAxis: 'Wpłaty',

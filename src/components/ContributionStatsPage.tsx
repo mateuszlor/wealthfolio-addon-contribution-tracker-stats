@@ -29,7 +29,6 @@ import {
   fillGaps,
   filterByRange,
   resolveAccountFromSeriesKey,
-  resolveEffectiveFlow,
   selectDrillDownRecords,
   selectFlow,
   signedAmount,
@@ -203,31 +202,30 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
 
   // Which flows exist in the window decides whether the switches mean anything.
+  // Withdrawals anywhere in the window is what gives the flow switch a reason to
+  // exist: a ledger of deposits alone has no second side to switch to.
   const hasWithdrawals = React.useMemo(
     () => scoped.some((record) => record.flow === 'withdrawals'),
     [scoped],
   );
-  const hasDeposits = React.useMemo(
-    () => scoped.some((record) => record.flow === 'deposits'),
-    [scoped],
-  );
 
-  // A ledger with nothing on its side of the switch is a misleading panel: the
-  // view falls back to what exists rather than rendering an empty chart. The
-  // fallback happens without the user asking for it, so the page renders a
-  // caption whenever `effectiveFlow` differs from what was picked.
-  const effectiveFlow: Flow = resolveEffectiveFlow(flow, hasDeposits, hasWithdrawals);
+  // Everything below aggregates the flow the user picked, `flow`, with no
+  // intermediate name that could resolve to something else. There is no
+  // `effectiveFlow`: a window without withdrawals shows an empty withdrawals
+  // ledger, which is the answer to the question that was asked. Substituting the
+  // side that does have records would relabel the hero total, the buckets, the
+  // split and the drill-down behind the user's back.
 
   // `summarize` signs but does not filter, so the single-flow views get exactly
   // their side of the ledger first; the net view keeps both.
   const flowRecords = React.useMemo(
-    () => selectFlow(scoped, effectiveFlow),
-    [scoped, effectiveFlow],
+    () => selectFlow(scoped, flow),
+    [scoped, flow],
   );
 
   const stats = React.useMemo(
-    () => summarize(flowRecords, effectiveFlow),
-    [flowRecords, effectiveFlow],
+    () => summarize(flowRecords, flow),
+    [flowRecords, flow],
   );
   const buckets = React.useMemo(
     () =>
@@ -236,12 +234,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           flowRecords,
           granularity,
           locale,
-          effectiveFlow,
+          flow,
         ),
         granularity,
         locale,
       ),
-    [flowRecords, granularity, locale, effectiveFlow],
+    [flowRecords, granularity, locale, flow],
   );
 
   // The split carries both flows under the net lead, so each bucket holds the
@@ -250,8 +248,8 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // unfiltered list leaks the opposite flow into the stack, which is exactly
   // how the withdrawals chart ended up reading deposits' bars.
   const split = React.useMemo(
-    () => bucketizeByAccount(flowRecords, granularity, locale, effectiveFlow),
-    [flowRecords, granularity, locale, effectiveFlow],
+    () => bucketizeByAccount(flowRecords, granularity, locale, flow),
+    [flowRecords, granularity, locale, flow],
   );
 
   // Splitting is meaningless with a single account, so the control only appears
@@ -262,7 +260,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // The withdrawals ledger reads as spending, not growth: the chart palette
   // shifts so the bars do not read as "money added". The net view keeps the
   // contributory green, because its bars stay meaningful in both directions.
-  const chartColorOffset = effectiveFlow === 'withdrawals' ? 5 : 0; // 5 = rose slot
+  const chartColorOffset = flow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
   const { rows, series } = React.useMemo(() => {
     if (splitMode === 'account') {
@@ -288,14 +286,14 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         {
           dataKey: 'total',
           label:
-            effectiveFlow === 'withdrawals' ? t('viewWithdrawals')
-              : effectiveFlow === 'net' ? t('netFlow')
+            flow === 'withdrawals' ? t('viewWithdrawals')
+              : flow === 'net' ? t('netFlow')
               : t('totalContributions'),
           ...seriesColor(chartColorOffset),
         },
       ],
     };
-  }, [splitMode, split, buckets, t, effectiveFlow]);
+  }, [splitMode, split, buckets, t, flow]);
 
   // Toggling back to the total view after splitting is the expected round trip.
   React.useEffect(() => {
@@ -339,7 +337,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // change re-reads the new range rather than showing the old one's deposits.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, splitMode, currency, effectiveFlow]);
+  }, [granularity, splitMode, currency, flow]);
 
   // The panel must list exactly the flows the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the
@@ -347,12 +345,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // a test can cover the scoping instead of trusting this call site.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, effectiveFlow);
-  }, [drillDown, currencyRecords, range, granularity, effectiveFlow]);
+    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, flow);
+  }, [drillDown, currencyRecords, range, granularity, flow]);
 
   const drillDownTotal = React.useMemo(
-    () => drillDownRecords.reduce((sum, r) => sum + signedAmount(r, effectiveFlow), 0),
-    [drillDownRecords, effectiveFlow],
+    () => drillDownRecords.reduce((sum, r) => sum + signedAmount(r, flow), 0),
+    [drillDownRecords, flow],
   );
 
   const rangeLabel =
@@ -369,8 +367,8 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className={HERO_LABEL_CLASS}>
-              {effectiveFlow === 'withdrawals' ? t('totalWithdrawn')
-                : effectiveFlow === 'net' ? t('netFlow')
+              {flow === 'withdrawals' ? t('totalWithdrawn')
+                : flow === 'net' ? t('netFlow')
                 : t('totalContributions')}
             </p>
             {/* The host mask is shorter than a real total, so the slot keeps a
@@ -397,15 +395,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             <dl className="flex gap-6 text-right">
               <div>
                 <dt className={HERO_LABEL_CLASS}>
-                  {effectiveFlow === 'withdrawals' ? t('withdrawalCount') : t('contributionCount')}
+                  {flow === 'withdrawals' ? t('withdrawalCount') : t('contributionCount')}
                 </dt>
                 <dd className="tabular-nums font-semibold">{stats.count}</dd>
               </div>
               <div>
                 <dt className={HERO_LABEL_CLASS}>
-                  {effectiveFlow === 'withdrawals'
+                  {flow === 'withdrawals'
                     ? t('averagePerWithdrawal')
-                    : effectiveFlow === 'net'
+                    : flow === 'net'
                       ? t('averagePerDeposit')
                       : t('averagePerDeposit')}
                 </dt>
@@ -415,7 +413,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               </div>
               <div>
                 <dt className={HERO_LABEL_CLASS}>
-                  {effectiveFlow === 'net' ? t('netMonthly') : t('averageMonthly')}
+                  {flow === 'net' ? t('netMonthly') : t('averageMonthly')}
                 </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay
@@ -498,15 +496,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             <div className="flex flex-wrap items-center gap-3">
               {/* The three ledgers: deposits, withdrawals and their signed net.
               Shown once the records include any withdrawal; a ledger of deposits
-              alone has no second side to switch to. Stays up while the user is
-              on the withdrawals ledger even in a window that has none —
-              otherwise narrowing the range would delete the switch they are
-              holding and strand them on a view they did not pick. */}
-              {(hasWithdrawals || flow === 'withdrawals') && (
+              alone has no second side to switch to. */}
+              {hasWithdrawals && (
                 <ToggleGroup
                   type="single"
                   size="sm"
-                  value={effectiveFlow}
+                  value={flow}
                   onValueChange={(value) => {
                     if (value) setFlow(value as Flow);
                   }}
@@ -561,15 +556,6 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             </div>
           </div>
 
-          {effectiveFlow !== flow && (
-            <p className="mt-2 text-muted-foreground text-xs">
-              {t('flowFallback', {
-                requested: t(FLOW_LABEL_KEY[flow]),
-                shown: t(FLOW_LABEL_KEY[effectiveFlow]),
-              })}
-            </p>
-          )}
-
           {rows.length === 0 ? (
             <p className="mt-4 text-muted-foreground text-sm">{t('noContributions')}</p>
           ) : (
@@ -596,7 +582,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         records={drillDownRecords}
         periodLabel={drillDown?.periodLabel ?? ''}
         accountName={drillDown?.accountName}
-        flow={effectiveFlow}
+        flow={flow}
         total={drillDownTotal}
         currency={currency}
         amountsHidden={amountsHidden}

@@ -537,7 +537,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
 
         {conversionBlocked && convertStatus !== 'loading' && (
           <p role="status" className="text-muted-foreground text-xs">
-            {t('conversionUnavailable', { reason: convertStatus })}
+            {t('conversionUnavailable', { shown: viewCurrency, reason: convertStatus })}
           </p>
         )}
 

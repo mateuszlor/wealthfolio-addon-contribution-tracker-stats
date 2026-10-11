@@ -187,6 +187,29 @@ from a CSS token, for the reason described above. Only the topmost segment gets
 These cost real debugging time. `validate.mjs` and `typecheck` now enforce most of them,
 but the reasoning is worth keeping.
 
+**Call a bridge method bare: no `.bind()`, and no `.call(receiver, …)` either.** Both make the
+host serialise the sandbox `Window` and fail with
+`DataCloneError: Failed to execute 'structuredClone' on 'Window': function(){} could not be cloned`,
+which surfaces as a rejected promise and a silently empty view rather than as an error. This bit
+twice: `.bind()` on `storage.get`, and then `.call(exchangeApi, plan)` on
+`exchangeRates.getRatesForDates` — written *because* a comment warned about `bind`, and wrong in
+the same way. The shape that works is a plain call on the borrowed reference
+(`getRatesForDates(plan)`), which is what `settings.get`, `storage.get` and `activities.getAll`
+all do.
+
+**Permission category ids are not runtime API domain names.** `ctx.api.exchangeRates` is the
+`currency` category; `ctx.api.alternativeAssets` is `alternative-assets`;
+`ctx.api.contributionLimits` is `contribution-limits`. Ten of the twenty-three runtime domains
+have no same-named category. A validator that matches one against the other silently warns
+("not a known SDK API domain") and then skips the call, so the matching permission is never
+required — and the host blocks it at runtime instead. `validate.mjs` keeps an explicit
+`RUNTIME_API_ALIASES` table for this; add to it rather than matching by name.
+
+**Do not name an i18next interpolation variable `currency`.** `t('key', { currency })` renders the
+literal `{{currency}}` on this host, while a sibling `{{reason}}` in the same string interpolates
+correctly — i18next's formatter consumes `options.currency` as a format spec. Measured, not
+guessed: the string had one working placeholder and one raw one.
+
 **Named imports are verified by TypeScript, not by a parser.** `npm run typecheck`
 resolves `export *` chains, `exports` maps and subpaths exactly, and reports invented
 names (`Stack`, `Typography`, `Stat` — none of which exist in `@wealthfolio/ui`) as

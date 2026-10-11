@@ -167,8 +167,18 @@ export function useConvertedRecords(
     }
 
     const seq = ++sequences.current;
+    // **Plain call on the borrowed reference — no `.call()`, no `.bind()`.**
+    // Measured on a real host: `getRatesForDates.call(exchangeApi, plan)` rejected
+    // with
+    //   DataCloneError: Failed to execute 'structuredClone' on 'Window':
+    //   function(){} could not be cloned.
+    // The bridge serialises its arguments through `structuredClone`, and handing
+    // it an explicit receiver makes it carry the sandbox Window into the clone —
+    // the same failure `AGENTS.md` records for `bind`. A bare call on the
+    // borrowed reference is the shape that provably works here: `settings.get`,
+    // `storage.get` and `activities.getAll` all take none.
     Promise.resolve()
-      .then(() => getRatesForDates!.call(exchangeApi, plan))
+      .then(() => getRatesForDates!(plan))
       .then((results: RateResult[]) => {
         if (seq !== sequences.current) return; // superseded by newer input
 

@@ -1235,11 +1235,30 @@ test('the page has no alternate ledger to fall back to', async () => {
   // mutation pass restored this file from `HEAD~1`, which silently reverted the
   // switch-visibility guard and the empty-state wording below. Both are visible
   // only in this component, so both need a source-level contract.
+  // Regression, found on a real host by the maintainer: narrowing the range to a
+  // period with no records deleted the `Total / Per account` switch. Both
+  // switches were gated on data inside the window, so the control the user was
+  // holding vanished at the same moment its data did.
   assert.match(
     source,
-    /\{\(hasWithdrawals \|\| flow === 'withdrawals'\) && \(/,
-    'the flow switch must survive a range with no withdrawals, or the user is stranded',
+    /\{\(hasWithdrawals \|\| flow !== 'deposits'\) && \(/,
+    "the flow switch must survive an empty range in BOTH directions, or the user is stranded",
   );
+  assert.match(
+    source,
+    /\{showSplit && \(/,
+    'the per-account switch must survive an empty range while it is in use',
+  );
+
+  // ...and the effect that used to cancel that fix in the next commit. It reset
+  // the mode to `total` the moment `canSplit` went false, which is what deleted
+  // the switch in the first place.
+  assert.doesNotMatch(
+    source,
+    /!canSplit && seriesMode === 'account'\) setSeriesMode\('total'\)/,
+    "the user's series mode must not be reset behind them",
+  );
+
   assert.match(
     source,
     /flow === 'withdrawals' \? t\('noWithdrawals'\) : t\('noContributions'\)/,

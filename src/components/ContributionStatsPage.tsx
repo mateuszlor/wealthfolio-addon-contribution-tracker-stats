@@ -253,8 +253,16 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
 
   // Splitting is meaningless with a single account, so the control only appears
-  // once there is something to split.
+  // once there is something to split — **or once the user has asked for it**.
+  //
+  // Gating on `split.accounts.length` alone deleted the switch under the user:
+  // narrow the range to a period with no records and `split.accounts` empties,
+  // `canSplit` goes false, and the control the user was holding vanishes. They
+  // are left in per-account mode with no way to leave it and nothing on screen
+  // saying why. `showSplit` keeps it mounted while the selection is `account`,
+  // so the empty window shows an empty chart instead of a missing control.
   const canSplit = split.accounts.length > 1;
+  const showSplit = canSplit || seriesMode === 'account';
   const splitMode: SeriesMode = canSplit && seriesMode === 'account' ? 'account' : 'total';
 
   // The withdrawals ledger reads as spending, not growth: the chart palette
@@ -295,10 +303,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     };
   }, [splitMode, split, buckets, t, flow]);
 
-  // Toggling back to the total view after splitting is the expected round trip.
-  React.useEffect(() => {
-    if (!canSplit && seriesMode === 'account') setSeriesMode('total');
-  }, [canSplit, seriesMode]);
+  // There is deliberately no effect forcing `seriesMode` back to `total` when
+  // `canSplit` goes false. That round trip was the bug: `canSplit` is scoped to
+  // the window, so narrowing the range emptied it, the effect reset the mode,
+  // and the control the user was holding disappeared in the same commit that
+  // emptied it. The user's selection is now theirs to change.
 
   const handleBarClick = React.useCallback(
     (info: BarClickInfo) => {
@@ -494,14 +503,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             </Tabs>
 
             <div className="flex flex-wrap items-center gap-3">
-              {/* The three ledgers: deposits, withdrawals and their signed net.
-              Shown once the records include any withdrawal; a ledger of deposits
-              alone has no second side to switch to. Stays up while the user is
-              on the withdrawals ledger even in a window that has none: without
-              this, narrowing the range would delete the switch they are holding
-              and strand them on an empty view they cannot leave. Nothing here
-              changes the selection — an empty ledger stays empty. */}
-              {(hasWithdrawals || flow === 'withdrawals') && (
+              {/* The three ledgers: deposits, withdrawals and their signed net. A ledger of
+              deposits alone has no second side to switch to, so the switch waits
+              for a withdrawal to exist — **but not once the user is holding one
+              of the other two**. `hasWithdrawals` is scoped to the window, and
+              narrowing the range empties it, which deleted the switch and left
+              the user in a ledger they could not leave. The guard is on the
+              user's own selection, so it survives in both directions. Nothing
+              here changes the selection: an empty ledger stays empty. */}
+              {(hasWithdrawals || flow !== 'deposits') && (
                 <ToggleGroup
                   type="single"
                   size="sm"
@@ -540,11 +550,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 </ToggleGroup>
               )}
 
-              {canSplit && (
+              {showSplit && (
                 <ToggleGroup
                   type="single"
                   size="sm"
-                  value={splitMode}
+                  value={seriesMode}
                   onValueChange={(value) => {
                     if (value) setSeriesMode(value as SeriesMode);
                   }}

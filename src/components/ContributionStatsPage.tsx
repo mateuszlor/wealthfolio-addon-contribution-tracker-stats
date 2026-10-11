@@ -37,6 +37,7 @@ import {
   type Granularity,
 } from '../lib/contributions';
 import { scopeRecords } from '../hooks/useAccountScope';
+import { useConvertedRecords } from '../hooks/useConvertedRecords';
 import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
@@ -124,6 +125,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
    * currency the selector stays hidden; otherwise it narrows the whole page —
    * stats, chart and drill-down — to the chosen one, defaulting to the largest
    * contributor so the page still opens on the dominant currency.
+   *
+   * A third option — "ALL (PLN)" — converts **every** record to the host's
+   * base currency through its own exchange-rate engine
+   * (`exchangeRates.getRatesForDates`, historical per-activity rates), the
+   * same rules the host's `invested` figure uses. A single-currency page is
+   * unchanged: with one currency the selector is hidden either way.
    */
   const currencies = React.useMemo(
     () => Array.from(new Set(records.map((record) => record.currency))).sort(),
@@ -143,16 +150,43 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     return best?.[0] ?? 'PLN';
   }, [records, flow]);
 
+  /** Sentinel for the converted view; a real currency code can never be this. */
+  const CURRENCY_ALL = '{{all}}';
+
   const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
-  const currency = currencyChoice ?? autoCurrency;
+  const allRequested = currencyChoice === CURRENCY_ALL;
+  const viewCurrency = allRequested ? null : currencyChoice ?? autoCurrency;
+
+  /**
+   * Conversion only runs while the ALL view is on. The hook returns `undefined`
+   * records while the rates are in flight, so the page keeps its previous
+   * rendering state rather than flashing an empty chart on every choice click.
+   *
+   * `dropped` — rows the bridge could not price — is surfaced next to the
+   * interval bar, the same way `intake` explains an unexpectedly small total.
+   */
+  const { records: allRecords, dropped: convertDropped, baseCurrency } = useConvertedRecords(ctx, records);
+  const conversionVisible = allRequested && baseCurrency !== undefined;
+
+  // What the rest of the page sees: either the per-currency slice (the old
+  // path, unchanged) or the host-converted whole in the base currency.
+  const scopedRecords = conversionVisible ? allRecords : null;
 
   const currencyRecords = React.useMemo(
-    () => scopeRecords(
-      records.filter((record) => record.currency === currency),
-      includedIds,
-    ),
-    [records, currency, includedIds],
+    () =>
+      scopeRecords(
+        conversionVisible
+          ? scopedRecords ?? []
+          : records.filter((record) => record.currency === viewCurrency),
+        includedIds,
+      ),
+    [records, viewCurrency, includedIds, conversionVisible, scopedRecords],
   );
+
+  // The ALL view reports its currency through the host setting, not through
+  // `viewCurrency` (which is null there): the hero, axis and drill-down all
+  // format through this one binding, so the whole page flips in one place.
+  const currency = allRequested ? (baseCurrency ?? 'PLN') : (viewCurrency ?? 'PLN');
 
   // The earliest month with a deposit in this currency, bounding the month
   // switcher's back chevron.
@@ -474,6 +508,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         )}
 
         {loading && !error && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
+
+        {conversionVisible && convertDropped > 0 && (
+          <p role="status" className="text-muted-foreground text-xs">
+            {t('conversionDropped', { count: convertDropped })}
+          </p>
+        )}
       </section>
 
       {!loading && !error && (
@@ -549,7 +589,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 <ToggleGroup
                   type="single"
                   size="sm"
-                  value={currency}
+                  value={allRequested ? CURRENCY_ALL : currency}
                   onValueChange={(value) => {
                     if (value) setCurrencyChoice(value);
                   }}
@@ -559,6 +599,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                       {code}
                     </ToggleGroupItem>
                   ))}
+                  <ToggleGroupItem
+                    value={CURRENCY_ALL}
+                    variant="outline"
+                    aria-label={t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                  >
+                    {t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                  </ToggleGroupItem>
                 </ToggleGroup>
               )}
 

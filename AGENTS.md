@@ -143,3 +143,10 @@ native file picker that no automation can drive, so the human picks the file.
 If you discover host behaviour that contradicts the above, fix the entry rather than adding a
 second one. If you discover something new, add it with the symptom that led you to it, so the
 next agent can recognise it.
+
+## Review rules (recorded)
+
+- **Language:** All PR comments / reviews must be in **English** (project language is English; docs, code and PR descriptions are English).
+- **Formatting:** Use Markdown formatting (`**bold**`, `- list`, `> quote`, code blocks) for readability — never a single unformatted line.
+- **Attribution:** Every review comment must end with `— produced by <agent> · model <provider>/<model>`.
+- **Specificity:** Point to the exact file / line (not random / generic text).

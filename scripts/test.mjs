@@ -377,6 +377,95 @@ test('the drill-down reset does not depend on the range', async () => {
   assert.doesNotMatch(deps, /range/, 'the range must not reset the panel: identity comparison closed it');
 });
 
+/* -------------------------------------------------------- currency convert */
+
+const { mod: convert, cleanup: cleanupConvert } = await loadTs('src/lib/convert.ts');
+
+const convRecord = (iso, amount, currency) => ({
+  date: new Date(iso),
+  amount,
+  flow: 'deposits',
+  currency,
+  accountId: 'acc-1',
+  accountName: 'Main',
+  activityId: '',
+});
+
+test('plans one (pair, day) per distinct currency+day, in base terms', () => {
+  const plan = convert.planRateQueries(
+    [
+      convRecord('2026-01-05T00:00:00Z', 100, 'EUR'),
+      convRecord('2026-01-05T10:00:00Z', 50, 'EUR'), // same day, deduped
+      convRecord('2026-01-06T00:00:00Z', 20, 'PLN'), // already base
+      convRecord('2026-01-07T00:00:00Z', 10, 'eur'), // case-normalised, deduped with the 5th
+      convRecord('2026-01-07T00:00:00Z', 5, 'PLN'),
+    ],
+    'PLN',
+  );
+
+  assert.deepEqual(plan, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+  ], 'distinct (currency, day) pairs only, sorted and deduplicated');
+});
+
+test('rates results become a table; unresolvable pairs stay absent', () => {
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+  ];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07', rate: null, error: 'no quote' },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5);
+  assert.equal(table.has('EUR|PLN|2026-01-07'), false, 'a failed pair must be absent, not zero');
+});
+
+test('convertRecords scales by the historical rate and reports drops', () => {
+  const records = [
+    convRecord('2026-01-05T00:00:00Z', 100, 'EUR'),
+    convRecord('2026-01-05T00:00:00Z', 500, 'PLN'),
+    convRecord('2026-01-07T00:00:00Z', 20, 'EUR'), // no rate for this date
+  ];
+
+  const rates = new Map([['EUR|PLN|2026-01-05', 4.5]]);
+  const { records: out, dropped } = convert.convertRecords(records, 'PLN', rates);
+
+  assert.deepEqual(
+    out.map((r) => ({ amount: r.amount, currency: r.currency, date: r.date })),
+    [
+      { amount: 450, currency: 'PLN', date: records[0].date },
+      { amount: 500, currency: 'PLN', date: records[1].date },
+    ],
+    'base-currency records pass through untouched; EUR is converted to base',
+  );
+  assert.equal(dropped, 1, 'the unrated row is dropped, not zeroed');
+});
+
+test('an all-base record set converts to itself with zero drops', () => {
+  const records = [convRecord('2026-01-05T00:00:00Z', 100, 'PLN')];
+  const { records: out, dropped } = convert.convertRecords(records, 'PLN', new Map());
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0].amount, 100);
+  assert.equal(dropped, 0);
+});
+
+test('the page wiring: conversion is fed the bridge, the ALL sentinel returns to the last currency', async () => {
+  // A source-level contract like the drill-down one: the hook call must be
+  // unconditional (React forbids hooks behind a ternary that changes with
+  // state), and the page must not clear the user's currency choice when the
+  // sentinel is on.
+  const source = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+
+  assert.match(source, /useConvertedRecords\(ctx, records\)/, 'hook is called unconditionally');
+  assert.match(source, /CURRENCY_ALL/, 'the ALL sentinel exists');
+  assert.match(source, /currencyChoice === CURRENCY_ALL/, 'the sentinel is switched on by selection');
+});
+
 /* ---------------------------------------------------------------- privacy */
 
 const { mod: privacy, cleanup: cleanupPrivacy } = await loadTs('src/lib/privacy.ts');

@@ -1106,6 +1106,137 @@ test('scopeRecords keeps unknown-account records out of a known scope', () => {
   assert.equal(accountScope.scopeRecords(records, ['broker']).length, 0);
 });
 
+test('an empty scope is a closed gate, not an open one', () => {
+  // Pinned in the *other* direction on purpose. `[]` is the host's honest answer
+  // for "no investment or cash account", so the gate is shut. Treating it as an
+  // open gate would put credit-card spending on an investment ledger the moment
+  // a host legitimately reported an empty scope.
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+  assert.equal(accountScope.scopeRecords(records, []).length, 0);
+});
+
+test('a bridge that cannot be read is degraded, not an empty scope', async () => {
+  // Regression: the hook resolved a missing / rejecting / non-list bridge to
+  // `[]`, and `[]` is a *closed* gate - so a degraded bridge silently filtered
+  // every record away and blanked the whole page.
+  const cases = {
+    'no bridge at all': undefined,
+    'a bridge without getAll': {},
+    'a rejecting bridge': { getAll: () => Promise.reject(new Error('bridge down')) },
+    'a bridge that throws synchronously': {
+      getAll: () => {
+        throw new Error('bridge down');
+      },
+    },
+    'a bridge answering with a non-list': { getAll: () => Promise.resolve(null) },
+    'a bridge answering with an object': { getAll: () => Promise.resolve({ items: [] }) },
+  };
+
+  for (const [label, bridge] of Object.entries(cases)) {
+    const outcome = await accountScope.loadAccountScope(bridge);
+    const state = accountScope.accountScopeState(outcome);
+
+    assert.equal(state.degraded, true, `${label}: should report degraded`);
+    // The whole bug in one assertion: this must be undefined, not []. A closed
+    // gate is what blanked the page.
+    assert.equal(state.includedIds, undefined, `${label}: the gate must stay open`);
+    assert.equal(state.ready, true, `${label}: the bridge has settled, one way or another`);
+  }
+});
+
+test('a degraded bridge leaves the page populated instead of blank', async () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+
+  const outcome = await accountScope.loadAccountScope({
+    getAll: () => Promise.reject(new Error('bridge down')),
+  });
+  const state = accountScope.accountScopeState(outcome);
+  const scoped = accountScope.scopeRecords(records, state.includedIds);
+
+  assert.equal(
+    scoped.length,
+    records.length,
+    'an unreadable accounts bridge must not blank the page',
+  );
+  // The cost of that choice is explicit: with no types readable, nothing is
+  // excluded, and the page has to disclose it.
+  assert.equal(state.degraded, true);
+});
+
+test('a bridge that answers produces a real scope, and only the excluded one closes it', async () => {
+  const outcome = await accountScope.loadAccountScope({
+    getAll: () =>
+      Promise.resolve([
+        { id: 'broker', name: 'Broker', accountType: 'SECURITIES' },
+        { id: 'wallet', name: 'Wallet', accountType: 'CASH' },
+        { id: 'card', name: 'Card', accountType: 'CREDIT_CARD' },
+      ]),
+  });
+
+  assert.equal(outcome.degraded, false, 'a real answer is not a degraded bridge');
+  assert.deepEqual(
+    accountScope.accountScopeState(outcome).includedIds,
+    ['broker', 'wallet'],
+  );
+
+  // An empty answer is the one case that stays a closed gate.
+  const empty = await accountScope.loadAccountScope({ getAll: () => Promise.resolve([]) });
+  const emptyState = accountScope.accountScopeState(empty);
+  assert.equal(empty.degraded, false);
+  assert.deepEqual(emptyState.includedIds, []);
+  assert.equal(
+    accountScope.scopeRecords([record('2026-01-05T00:00:00Z', 100, 'broker')], emptyState.includedIds)
+      .length,
+    0,
+    'an empty scope closes the gate',
+  );
+});
+
+test('the gate is open, but not ready, before the bridge answers', () => {
+  const state = accountScope.accountScopeState(undefined);
+  assert.equal(state.includedIds, undefined, 'open gate while loading');
+  assert.equal(state.ready, false);
+  assert.equal(state.degraded, false, 'loading is not a degraded bridge');
+});
+
+/* ------------------------------------------------------- flow fallback */
+
+test('resolveEffectiveFlow falls back only for a withdrawals view with nothing to show', () => {
+  const { resolveEffectiveFlow } = contributions;
+
+  // The fallback the page has to explain: withdrawals asked for, none in range.
+  assert.equal(resolveEffectiveFlow('withdrawals', true, false), 'deposits');
+  // Neither side present: the signed net is the only ledger that can exist.
+  assert.equal(resolveEffectiveFlow('withdrawals', false, false), 'net');
+
+  // Satisfiable, or any other request: the switch never moves on its own.
+  assert.equal(resolveEffectiveFlow('withdrawals', true, true), 'withdrawals');
+  assert.equal(resolveEffectiveFlow('deposits', true, false), 'deposits');
+  assert.equal(resolveEffectiveFlow('deposits', false, false), 'deposits');
+  assert.equal(resolveEffectiveFlow('net', true, false), 'net');
+  assert.equal(resolveEffectiveFlow('net', false, false), 'net');
+});
+
+test('a fallback changes what the page reports, not only which ledger is drawn', () => {
+  // The fallback is what makes the caption worth rendering: the hero total,
+  // the bucket totals and the drill-down all read from `effectiveFlow`, so a
+  // silent switch would relabel every figure on the page.
+  const records = [record('2026-01-05T00:00:00Z', 40, 'broker', 'Broker', 'withdrawals')];
+  const shown = contributions.resolveEffectiveFlow('withdrawals', false, false);
+
+  assert.notEqual(shown, 'withdrawals');
+  assert.equal(
+    contributions.summarize(contributions.selectFlow(records, shown), shown).total,
+    -40,
+  );
+});
+
 /* --------------------------------------------------------------------- run */
 let failed = 0;
 for (const { name, fn } of tests) {

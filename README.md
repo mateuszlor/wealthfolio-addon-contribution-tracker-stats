@@ -49,7 +49,13 @@ Two definitions matter:
 - Only **investment and cash** accounts are on the ledger. A credit card is not
   a withdrawal source: money spent on it is spending, not money leaving your
   savings, so credit-card activity is kept off every view. The addon reads your
-  account types for this, which is the second permission it requests.
+  account types for this, which is the second permission it requests. If that
+  read fails, the page keeps its numbers and says so in a warning rather than
+  going blank.
+
+The three views fall back rather than render an empty chart: ask for
+*Withdrawals* in a period that has none and the page shows the side that does,
+with a caption saying which and why.
 
 In the *Netto* view the drill-down panel lists both directions at once, with a
 `+` / `−` marker per row and a signed total.

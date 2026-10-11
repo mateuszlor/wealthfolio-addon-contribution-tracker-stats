@@ -29,6 +29,7 @@ import {
   fillGaps,
   filterByRange,
   resolveAccountFromSeriesKey,
+  resolveEffectiveFlow,
   selectDrillDownRecords,
   selectFlow,
   signedAmount,
@@ -97,7 +98,9 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
 
   // Investment and cash accounts only: the two account groups the flow ledger
   // is meaningful for. Credit-card rows never reach the aggregation below.
-  const { includedIds } = useAccountScope(ctx);
+  // `scopeDegraded` means no account type could be read at all, so the gate is
+  // open and the page says so rather than implying the exclusion still holds.
+  const { includedIds, degraded: scopeDegraded } = useAccountScope(ctx);
 
   // `locale` only labels the buckets now; amounts and dates come from the host
   // formatters above. Regional aliases are already normalised by the SDK.
@@ -210,11 +213,10 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   );
 
   // A ledger with nothing on its side of the switch is a misleading panel: the
-  // view falls back to what exists rather than rendering an empty chart.
-  const effectiveFlow: Flow =
-    flow === 'withdrawals' && !hasWithdrawals ? (hasDeposits ? 'deposits' : 'net')
-    : flow === 'net' && !hasWithdrawals && !hasDeposits ? 'net'
-    : flow;
+  // view falls back to what exists rather than rendering an empty chart. The
+  // fallback happens without the user asking for it, so the page renders a
+  // caption whenever `effectiveFlow` differs from what was picked.
+  const effectiveFlow: Flow = resolveEffectiveFlow(flow, hasDeposits, hasWithdrawals);
 
   // `summarize` signs but does not filter, so the single-flow views get exactly
   // their side of the ledger first; the net view keeps both.
@@ -377,6 +379,18 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               <AmountDisplay value={stats.total} currency={currency} isHidden={amountsHidden} />
             </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
+            {/* What the numbers cover. The excluded-account note is the rule; the
+                degraded one replaces it when the account types could not be read
+                and the exclusion is therefore not being applied. */}
+            <p
+              className={
+                scopeDegraded
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              {scopeDegraded ? t('scopeUnavailable') : t('barredByScope')}
+            </p>
           </div>
 
           <div className="flex items-start gap-4">
@@ -484,8 +498,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             <div className="flex flex-wrap items-center gap-3">
               {/* The three ledgers: deposits, withdrawals and their signed net.
               Shown once the records include any withdrawal; a ledger of deposits
-              alone has no second side to switch to. */}
-              {hasWithdrawals && (
+              alone has no second side to switch to. Stays up while the user is
+              on the withdrawals ledger even in a window that has none —
+              otherwise narrowing the range would delete the switch they are
+              holding and strand them on a view they did not pick. */}
+              {(hasWithdrawals || flow === 'withdrawals') && (
                 <ToggleGroup
                   type="single"
                   size="sm"
@@ -543,6 +560,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               )}
             </div>
           </div>
+
+          {effectiveFlow !== flow && (
+            <p className="mt-2 text-muted-foreground text-xs">
+              {t('flowFallback', {
+                requested: t(FLOW_LABEL_KEY[flow]),
+                shown: t(FLOW_LABEL_KEY[effectiveFlow]),
+              })}
+            </p>
+          )}
 
           {rows.length === 0 ? (
             <p className="mt-4 text-muted-foreground text-sm">{t('noContributions')}</p>

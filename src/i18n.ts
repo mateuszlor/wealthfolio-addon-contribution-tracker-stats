@@ -40,6 +40,9 @@ export const translations: Record<string, AddonTranslationBundle> = {
     netMonthly: 'Net per month',
     depositsLockedToNet: 'Locking to month',
     barredByScope: 'Investment and cash accounts only — credit cards excluded',
+    scopeUnavailable:
+      'Account types could not be read — credit card activity may be included',
+    flowFallback: 'No {{requested}} in this period — showing {{shown}} instead.',
     loading: 'Loading contributions...',
     loadError: 'Could not load activities: {{message}}',
     chartAxis: 'Contributions',
@@ -87,6 +90,9 @@ export const translations: Record<string, AddonTranslationBundle> = {
     netMonthly: 'Netto na miesiąc',
     depositsLockedToNet: 'Przypięto do miesiąca',
     barredByScope: 'Tylko konta inwestycyjne i gotówkowe — karty kredytowe wyłączone',
+    scopeUnavailable:
+      'Nie udało się odczytać typów kont — aktywność kart kredytowych może być wliczona',
+    flowFallback: 'Brak: {{requested}} w tym okresie — pokazujemy {{shown}}.',
     loading: 'Wczytywanie wpłat...',
     loadError: 'Nie udało się wczytać aktywności: {{message}}',
     chartAxis: 'Wpłaty',

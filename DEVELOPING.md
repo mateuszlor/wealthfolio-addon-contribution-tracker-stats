@@ -137,6 +137,15 @@ drill-down can label each row with `+` / `−` straight from `record.flow`.
 `summarize` *signs* but does not *filter* — the callers must narrow with `selectFlow` first.
 The test `summarize signs withdrawals under the net view only` pins that contract.
 
+`resolveEffectiveFlow(requested, hasDeposits, hasWithdrawals)` is the one place the view is
+allowed to move without the user asking. It exists because a ledger with nothing on its side is
+a misleading panel, and it only ever fires for `withdrawals` — `deposits` showing an empty chart
+is honest, a ledger that quietly swapped is not. A result different from `requested` is the
+signal for the page to render the `flowFallback` caption, and the flow switch stays mounted
+while the user is on withdrawals so narrowing the range cannot strand them on a view they did
+not pick. `effectiveFlow` (not `flow`) is what feeds the hero, the buckets, the split and the
+drill-down, so the caption is describing the figures actually on screen.
+
 Intake reads only `DEPOSIT` and `WITHDRAWAL`. Transfers (`TRANSFER_IN` / `TRANSFER_OUT`) are
 counted in `byType` and then skipped in both directions: a move between the user's own accounts
 is not new money nor a real outflow, and counting it would doublecount both sides.
@@ -146,6 +155,14 @@ investment or cash (`SECURITIES`, `CRYPTOCURRENCY`, `CASH`). A credit card is ex
 spending on it is not a withdrawal from savings. While the accounts bridge has not answered,
 the gate stays open so a slow bridge never blanks the page; if it answers, `unknown-account`
 rows (activities with no id) are kept **out** of a known scope.
+
+The gate is keyed on `undefined` versus `[]`, and that distinction is load-bearing. `[]` is a
+*closed* gate — the host's honest "no investment or cash account" — so a bridge that is
+missing, rejecting, or answering with a non-list must resolve to `undefined` and raise
+`degraded`, never to `[]`. `loadAccountScope` is the pure seam that decides this and
+`accountScopeState` maps the outcome to what the page reads, so `npm test` covers it without a
+React renderer. A degraded bridge lets credit-card rows through; the page shows that as a
+warning, because an unexplained empty ledger is worse than a labelled one.
 
 Both views share `buildPeriodAxis`, so the total and the split chart lay bars on exactly
 the same x-axis. `fillGaps` is a thin wrapper over it for the total view.

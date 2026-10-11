@@ -127,6 +127,47 @@ value for **every** account (zero included). That is what lets the chart render 
 stack: if a period were missing an account key, the segment order would change between
 columns.
 
+### Flows: deposits, withdrawals, net
+
+A `ContributionRecord` carries a `flow` (`'deposits' | 'withdrawals' | 'net'` — the union
+reuses the view name for the net case) and a **positive** `amount`. The sign is never stored:
+`signedAmount(record, flow)` applies it at read time, so no caller can double-negate and the
+drill-down can label each row with `+` / `−` straight from `record.flow`.
+
+`summarize` *signs* but does not *filter* — the callers must narrow with `selectFlow` first.
+The test `summarize signs withdrawals under the net view only` pins that contract.
+
+**The view is never swapped.** A ledger with nothing on its side of the switch shows an empty
+chart with an empty-state message naming that ledger — it does **not** fall back to a side that
+has records. An earlier revision resolved this through an `effectiveFlow` fallback, on the
+theory that an empty panel is a misleading panel; it was worse than the problem. It relabelled
+the hero total, the buckets, the split and the drill-down behind the user's back, so a viewer
+who asked for withdrawals was reading deposits. There is no `resolveEffectiveFlow` in the lib and
+the test `a ledger with nothing in it stays empty, it is never swapped for another` pins the
+contract that replaced it.
+
+The flow switch stays mounted while the user is on the withdrawals ledger, even in a window
+that has none. Gating it on `hasWithdrawals` alone meant narrowing the range deleted the control
+the user was holding and stranded them on an empty view they could not leave.
+
+Intake reads only `DEPOSIT` and `WITHDRAWAL`. Transfers (`TRANSFER_IN` / `TRANSFER_OUT`) are
+counted in `byType` and then skipped in both directions: a move between the user's own accounts
+is not new money nor a real outflow, and counting it would doublecount both sides.
+
+Account scoping lives in `hooks/useAccountScope.ts`: `accounts.getAll()` decides which ids are
+investment or cash (`SECURITIES`, `CRYPTOCURRENCY`, `CASH`). A credit card is excluded —
+spending on it is not a withdrawal from savings. While the accounts bridge has not answered,
+the gate stays open so a slow bridge never blanks the page; if it answers, `unknown-account`
+rows (activities with no id) are kept **out** of a known scope.
+
+The gate is keyed on `undefined` versus `[]`, and that distinction is load-bearing. `[]` is a
+*closed* gate — the host's honest "no investment or cash account" — so a bridge that is
+missing, rejecting, or answering with a non-list must resolve to `undefined` and raise
+`degraded`, never to `[]`. `loadAccountScope` is the pure seam that decides this and
+`accountScopeState` maps the outcome to what the page reads, so `npm test` covers it without a
+React renderer. A degraded bridge lets credit-card rows through; the page shows that as a
+warning, because an unexplained empty ledger is worse than a labelled one.
+
 Both views share `buildPeriodAxis`, so the total and the split chart lay bars on exactly
 the same x-axis. `fillGaps` is a thin wrapper over it for the total view.
 

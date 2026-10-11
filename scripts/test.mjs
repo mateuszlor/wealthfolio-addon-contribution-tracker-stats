@@ -176,13 +176,67 @@ test('tolerates a non-array payload', () => {
   assert.deepEqual(intake.toContributionRecords({}).records, []);
 });
 
+/* ------------------------------------------------------------- flows */
+
+test('a WITHDRAWAL activity becomes a withdrawals record', () => {
+  const { records, stats } = intake.toContributionRecords([
+    {
+      activityType: 'WITHDRAWAL',
+      date: '2026-02-10T00:00:00Z',
+      amount: '500',
+      currency: 'PLN',
+    },
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].flow, 'withdrawals');
+  assert.equal(records[0].amount, 500, 'the amount stays positive; the sign lives in flow');
+  assert.equal(stats.withdrawals, 1);
+  assert.equal(stats.deposits, 0);
+});
+
+test('TRANSFER_OUT is never counted as a withdrawal', () => {
+  // The regression guard for the definitional choice: a transfer between the
+  // user's own accounts is not money leaving the ledger.
+  const { records, stats } = intake.toContributionRecords([
+    { activityType: 'TRANSFER_OUT', date: '2026-02-10T00:00:00Z', amount: '500' },
+    { activityType: 'TRANSFER_IN', date: '2026-02-10T00:00:00Z', amount: '500' },
+  ]);
+
+  assert.equal(records.length, 0);
+  assert.equal(stats.withdrawals, 0);
+  assert.equal(stats.deposits, 0);
+  assert.equal(stats.byType.TRANSFER_OUT, 1, 'still counted, so a wrong filter is visible');
+});
+
+test('activityTypeOverride can turn a row into a withdrawal', () => {
+  const { records } = intake.toContributionRecords([
+    { activityType: 'BUY', activityTypeOverride: 'WITHDRAWAL', date: '2026-02-10T00:00:00Z', amount: '100' },
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].flow, 'withdrawals');
+});
+
+test('deposits and withdrawals produce records in one pass', () => {
+  const { records, stats } = intake.toContributionRecords([
+    { activityType: 'DEPOSIT', date: '2026-01-05T00:00:00Z', amount: '100' },
+    { activityType: 'WITHDRAWAL', date: '2026-01-20T00:00:00Z', amount: '40' },
+  ]);
+
+  assert.equal(records.length, 2);
+  assert.equal(stats.deposits, 1);
+  assert.equal(stats.withdrawals, 1);
+});
+
 /* ----------------------------------------------------------- contributions */
 
 const { mod: contributions, cleanup: cleanupContributions } = await loadTs('src/lib/contributions.ts');
 
-const record = (iso, amount, account = 'acc-1', accountName = 'Main') => ({
+const record = (iso, amount, account = 'acc-1', accountName = 'Main', flow = 'deposits') => ({
   date: new Date(iso),
   amount,
+  flow,
   accountId: account,
   accountName: accountName || account,
 });
@@ -746,6 +800,44 @@ test('the drill-down is empty for a period with no deposits', () => {
   );
 });
 
+/**
+ * The regression the host exposed: the per-account split was fed the whole,
+ * unfiltered `scoped` list, so under the withdrawals view the stacked chart
+ * summed deposits into the bars while the drill-down panel (which filters by
+ * flow) listed withdrawals. The bar and the panel disagreed by construction.
+ *
+ * The page now calls `bucketizeByAccount` on `flowRecords`, not `scoped`.
+ * This test pins the composition the page must use.
+ */
+test('the per-account split under one flow sees only that flow', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+    record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+  ];
+
+  const flowRecords = contributions.selectFlow(records, 'withdrawals');
+  const split = contributions.bucketizeByAccount(flowRecords, 'month', 'en', 'withdrawals');
+
+  assert.deepEqual(
+    split.accounts.map((a) => a.id),
+    ['b'],
+    'the withdrawals view must not carry a deposits series',
+  );
+  // A withdrawal is an outflow: the bar for it must read *below* the axis.
+  assert.equal(split.buckets[0].total, -40);
+
+  // Conversely, feeding the unfiltered list is exactly the shape the bug had:
+  // kept explicit so a revert that "works" is recognised as the old behaviour.
+  const unfiltered = contributions.bucketizeByAccount(records, 'month', 'en', 'withdrawals');
+  // Signed the new way, deposits (+100) outweigh the withdrawal (−40), so the
+  // magnitude ordering puts 'a' first — the accounts themselves are the pin.
+  assert.deepEqual(
+    unfiltered.accounts.map((a) => a.id).sort(),
+    ['a', 'b'],
+    'unfiltered input yields both flows — the shape the bug had',
+  );
+});
+
 test('a series key resolves to the account behind it', () => {
   const accounts = [
     { id: 'acc-1', name: 'Main' },
@@ -826,6 +918,402 @@ test('an unresolvable series key opens no panel at all', () => {
     ),
     undefined,
   );
+});
+
+/* ------------------------------------------------------- flows aggregate */
+
+test('summarize signs withdrawals under the net view only', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  // `summarize` signs the ledger but does not filter it: the caller narrows to
+  // one flow first (`selectFlow`), which is what the page does.
+  const depositsOnly = contributions.selectFlow(records, 'deposits');
+  const withdrawalsOnly = contributions.selectFlow(records, 'withdrawals');
+
+  assert.equal(contributions.summarize(depositsOnly, 'deposits').total, 100);
+  // Under this ledger a withdrawal is an outflow: negative, not just a colour.
+  assert.equal(contributions.summarize(withdrawalsOnly, 'withdrawals').total, -40);
+  assert.equal(contributions.summarize(records, 'net').total, 60);
+});
+
+// The regression this pins: the old code summarised `record.amount` unconditionally,
+// so switching the switch to Net left the hero reading 140 instead of 60 — a
+// "withdrawal-proof" chart that ignored withdrawals.
+test('the net total is not the deposits total with withdrawals present', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 1000),
+    record('2026-02-05T00:00:00Z', 250, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const net = contributions.summarize(records, 'net');
+  assert.notEqual(net.total, contributions.summarize(records, 'deposits').total);
+  assert.equal(net.total, 750);
+});
+
+test('bucketize totals signed under the net view', () => {
+  const buckets = contributions.bucketize(
+    [
+      record('2026-01-05T00:00:00Z', 100),
+      record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+      record('2026-02-02T00:00:00Z', 70),
+    ],
+    'month',
+    'en',
+    'net',
+  );
+
+  assert.equal(buckets[0].total, 60);
+  assert.equal(buckets[1].total, 70);
+  assert.equal(buckets[0].count, 2, 'count counts both directions');
+});
+
+test('bucketizeByAccount signs per account under the net view', () => {
+  const result = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+      record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+    ],
+    'month',
+    'en',
+    'net',
+  );
+
+  assert.equal(result.buckets[0].values.a, 100);
+  assert.equal(result.buckets[0].values.b, -40);
+  assert.equal(result.buckets[0].total, 60);
+  assert.deepEqual(
+    result.accounts.map((a) => a.id),
+    ['a', 'b'],
+    'ordering still by contribution magnitude',
+  );
+});
+
+test('the drill-down under net lists both directions', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const january = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'net',
+  );
+
+  assert.equal(january.length, 2, 'net mixes both flows in one panel');
+  assert.equal(
+    january.reduce((sum, r) => sum + contributions.signedAmount(r, 'net'), 0),
+    60,
+  );
+
+  const depositsOnly = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'deposits',
+  );
+  assert.equal(depositsOnly.length, 1);
+});
+
+test('the withdrawal view drills into withdrawals only', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const panel = contributions.selectDrillDownRecords(
+    records,
+    OPEN,
+    { periodKey: '2026-01' },
+    'month',
+    'withdrawals',
+  );
+
+  assert.equal(panel.length, 1);
+  assert.equal(panel[0].amount, 40);
+});
+
+/**
+ * The regression: withdrawals drew as positive, upward bars — visually
+ * indistinguishable from "money added", only in another colour. An outflow
+ * reads correctly only when its bars hang *below* the axis, so `signedAmount`
+ * signs the whole ledger, not just the net view.
+ */
+test('a withdrawals bucket is negative: the bar goes below the axis', () => {
+  const flowRecords = contributions.selectFlow(
+    [record('2026-01-20T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals')],
+    'withdrawals',
+  );
+
+  const bucket = contributions.bucketize(flowRecords, 'month', 'en', 'withdrawals')[0];
+  assert.ok(bucket.total < 0, `expected a negative total, got ${bucket.total}`);
+  assert.equal(bucket.total, -40);
+
+  // The per-account split agrees, so stacked withdrawals also hang below.
+  const split = contributions.bucketizeByAccount(flowRecords, 'month', 'en', 'withdrawals');
+  assert.equal(split.buckets[0].total, -40);
+
+  // Deposits keep the old, positive shape.
+  const deposit = contributions.bucketize(
+    [record('2026-01-05T00:00:00Z', 100)],
+    'month',
+    'en',
+    'deposits',
+  )[0];
+  assert.equal(deposit.total, 100);
+});
+
+/* ---------------------------------------------------------- account scope */
+
+const { mod: accountScope, cleanup: cleanupAccountScope } = await loadTs('src/hooks/useAccountScope.ts');
+
+test('included account types are investment and cash, never credit cards', () => {
+  assert.ok(accountScope.isIncludedAccountType('SECURITIES'));
+  assert.ok(accountScope.isIncludedAccountType('CRYPTOCURRENCY'));
+  assert.ok(accountScope.isIncludedAccountType('CASH'));
+  assert.ok(accountScope.isIncludedAccountType('securities'), 'case-insensitive');
+
+  assert.equal(accountScope.isIncludedAccountType('CREDIT_CARD'), false);
+  assert.equal(accountScope.isIncludedAccountType(undefined), false);
+  assert.equal(accountScope.isIncludedAccountType(''), false);
+});
+
+test('scopeRecords filters out excluded accounts and keeps the rest', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+
+  assert.deepEqual(
+    accountScope.scopeRecords(records, ['broker']).map((r) => r.accountId),
+    ['broker'],
+  );
+  // The gate is open while the accounts bridge has not answered yet, so a slow
+  // bridge never blanks the page.
+  assert.equal(accountScope.scopeRecords(records, undefined).length, 2);
+});
+
+test('scopeRecords keeps unknown-account records out of a known scope', () => {
+  // An activity without an account id collapses into `unknown-account`; when the
+  // scope is known, that row cannot claim to belong to it.
+  const records = [record('2026-01-05T00:00:00Z', 100, 'unknown-account')];
+  assert.equal(accountScope.scopeRecords(records, ['broker']).length, 0);
+});
+
+test('an empty scope is a closed gate, not an open one', () => {
+  // Pinned in the *other* direction on purpose. `[]` is the host's honest answer
+  // for "no investment or cash account", so the gate is shut. Treating it as an
+  // open gate would put credit-card spending on an investment ledger the moment
+  // a host legitimately reported an empty scope.
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+  assert.equal(accountScope.scopeRecords(records, []).length, 0);
+});
+
+test('a bridge that cannot be read is degraded, not an empty scope', async () => {
+  // Regression: the hook resolved a missing / rejecting / non-list bridge to
+  // `[]`, and `[]` is a *closed* gate - so a degraded bridge silently filtered
+  // every record away and blanked the whole page.
+  const cases = {
+    'no bridge at all': undefined,
+    'a bridge without getAll': {},
+    'a rejecting bridge': { getAll: () => Promise.reject(new Error('bridge down')) },
+    'a bridge that throws synchronously': {
+      getAll: () => {
+        throw new Error('bridge down');
+      },
+    },
+    'a bridge answering with a non-list': { getAll: () => Promise.resolve(null) },
+    'a bridge answering with an object': { getAll: () => Promise.resolve({ items: [] }) },
+  };
+
+  for (const [label, bridge] of Object.entries(cases)) {
+    const outcome = await accountScope.loadAccountScope(bridge);
+    const state = accountScope.accountScopeState(outcome);
+
+    assert.equal(state.degraded, true, `${label}: should report degraded`);
+    // The whole bug in one assertion: this must be undefined, not []. A closed
+    // gate is what blanked the page.
+    assert.equal(state.includedIds, undefined, `${label}: the gate must stay open`);
+    assert.equal(state.ready, true, `${label}: the bridge has settled, one way or another`);
+  }
+});
+
+test('a degraded bridge leaves the page populated instead of blank', async () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100, 'broker'),
+    record('2026-01-06T00:00:00Z', 20, 'card'),
+  ];
+
+  const outcome = await accountScope.loadAccountScope({
+    getAll: () => Promise.reject(new Error('bridge down')),
+  });
+  const state = accountScope.accountScopeState(outcome);
+  const scoped = accountScope.scopeRecords(records, state.includedIds);
+
+  assert.equal(
+    scoped.length,
+    records.length,
+    'an unreadable accounts bridge must not blank the page',
+  );
+  // The cost of that choice is explicit: with no types readable, nothing is
+  // excluded, and the page has to disclose it.
+  assert.equal(state.degraded, true);
+});
+
+test('a bridge that answers produces a real scope, and only the excluded one closes it', async () => {
+  const outcome = await accountScope.loadAccountScope({
+    getAll: () =>
+      Promise.resolve([
+        { id: 'broker', name: 'Broker', accountType: 'SECURITIES' },
+        { id: 'wallet', name: 'Wallet', accountType: 'CASH' },
+        { id: 'card', name: 'Card', accountType: 'CREDIT_CARD' },
+      ]),
+  });
+
+  assert.equal(outcome.degraded, false, 'a real answer is not a degraded bridge');
+  assert.deepEqual(
+    accountScope.accountScopeState(outcome).includedIds,
+    ['broker', 'wallet'],
+  );
+
+  // An empty answer is the one case that stays a closed gate.
+  const empty = await accountScope.loadAccountScope({ getAll: () => Promise.resolve([]) });
+  const emptyState = accountScope.accountScopeState(empty);
+  assert.equal(empty.degraded, false);
+  assert.deepEqual(emptyState.includedIds, []);
+  assert.equal(
+    accountScope.scopeRecords([record('2026-01-05T00:00:00Z', 100, 'broker')], emptyState.includedIds)
+      .length,
+    0,
+    'an empty scope closes the gate',
+  );
+});
+
+test('the gate is open, but not ready, before the bridge answers', () => {
+  const state = accountScope.accountScopeState(undefined);
+  assert.equal(state.includedIds, undefined, 'open gate while loading');
+  assert.equal(state.ready, false);
+  assert.equal(state.degraded, false, 'loading is not a degraded bridge');
+});
+
+/* ------------------------------------------------- no silent ledger swap */
+
+test('the page has no alternate ledger to fall back to', async () => {
+  // The silent swap lived in the *component*, so no test over the pure modules
+  // could see it — the mutation run put a fallback straight back into
+  // `ContributionStatsPage.tsx` and all 78 tests stayed green. Asserting it at
+  // the source level is the only place the decision is made.
+  //
+  // Comments are stripped first: this file documents the fallback in prose on
+  // purpose, and the ban below is about code, not about the word appearing.
+  const raw = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  // Every aggregation reads the state the user picked. `flow` is the one name
+  // the hero, the buckets, the split and the drill-down are allowed to use.
+  for (const [fn, call] of [
+    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/],
+    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/],
+    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/],
+    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/],
+  ]) {
+    const match = source.match(call);
+    assert.ok(match, `${fn} must be called`);
+    assert.equal(match[1], 'flow', `${fn} must aggregate the picked flow, not another one`);
+  }
+
+  // Regression, found by reading the shipped diff rather than a test run: a
+  // mutation pass restored this file from `HEAD~1`, which silently reverted the
+  // switch-visibility guard and the empty-state wording below. Both are visible
+  // only in this component, so both need a source-level contract.
+  // Regression, found on a real host by the maintainer: narrowing the range to a
+  // period with no records deleted the `Total / Per account` switch. Both
+  // switches were gated on data inside the window, so the control the user was
+  // holding vanished at the same moment its data did.
+  assert.match(
+    source,
+    /\{\(hasWithdrawals \|\| flow !== 'deposits'\) && \(/,
+    "the flow switch must survive an empty range in BOTH directions, or the user is stranded",
+  );
+  assert.match(source, /\{canSplit && \(/, 'the per-account switch must be rendered');
+
+  // The guards above were not enough on their own, and that is the lesson worth
+  // keeping: v1.2.7 shipped a guard on both switches and both still vanished on
+  // the host, because the *guard* was right and the value behind it was still
+  // window-scoped. Assert the source of the capability checks, not their use.
+  const declaration = (name) => {
+    const at = source.indexOf(`const ${name}`);
+    assert.ok(at >= 0, `${name} must exist`);
+    return source.slice(at, at + 260);
+  };
+
+  const withdrawals = declaration('hasWithdrawals');
+  assert.match(
+    withdrawals,
+    /records\.some/,
+    'a second ledger existing is a property of the data, not of the window',
+  );
+  assert.doesNotMatch(withdrawals, /scoped\.some/, 'the window must not decide what ledgers exist');
+
+  const split = declaration('canSplit');
+  assert.match(
+    split,
+    /records\.map/,
+    'having more than one account is a property of the data, not of the window',
+  );
+  assert.doesNotMatch(split, /split\.accounts/, 'the window must not decide what ledgers exist');
+
+  // ...and the effect that used to cancel that fix in the next commit. It reset
+  // the mode to `total` the moment `canSplit` went false, which is what deleted
+  // the switch in the first place.
+  assert.doesNotMatch(
+    source,
+    /!canSplit && seriesMode === 'account'\) setSeriesMode\('total'\)/,
+    "the user's series mode must not be reset behind them",
+  );
+
+  assert.match(
+    source,
+    /flow === 'withdrawals' \? t\('noWithdrawals'\) : t\('noContributions'\)/,
+    'an empty ledger must say which ledger is empty',
+  );
+});
+
+test('a ledger with nothing in it stays empty, it is never swapped for another', () => {
+  // Regression: the page used to resolve an unsatisfiable view through an
+  // `effectiveFlow` fallback, so asking for withdrawals in a window that had
+  // none silently rendered the deposits ledger instead — the hero total, the
+  // buckets, the split and the drill-down all relabelled behind the user's back.
+  //
+  // There is deliberately no `resolveEffectiveFlow` in the lib any more. What is
+  // pinned here is the contract it used to break: narrowing to the ledger the
+  // user picked yields that ledger's own records and nothing else.
+  const depositsOnly = [record('2026-01-05T00:00:00Z', 100, 'broker', 'Broker', 'deposits')];
+
+  assert.deepEqual(
+    contributions.selectFlow(depositsOnly, 'withdrawals'),
+    [],
+    'the withdrawals view of a deposits-only window is empty, not the deposits',
+  );
+  assert.deepEqual(contributions.selectFlow(depositsOnly, 'deposits'), depositsOnly);
+
+  // And the empty ledger aggregates to an empty panel rather than borrowing a total.
+  const shown = contributions.selectFlow(depositsOnly, 'withdrawals');
+  assert.equal(contributions.summarize(shown, 'withdrawals').total, 0);
+  assert.deepEqual(contributions.bucketize(shown, 'month', 'en', 'withdrawals'), []);
+  assert.deepEqual(contributions.bucketizeByAccount(shown, 'month', 'en', 'withdrawals'), {
+    accounts: [],
+    buckets: [],
+  });
 });
 
 /* --------------------------------------------------------------------- run */

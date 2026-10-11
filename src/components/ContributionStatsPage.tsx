@@ -15,6 +15,7 @@ import {
   useAmountFormatting,
   useDateFormatting,
 } from '@wealthfolio/ui';
+import { useAccountScope } from '../hooks/useAccountScope';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { usePersistedWindow } from '../hooks/usePersistedWindow';
@@ -29,9 +30,13 @@ import {
   filterByRange,
   resolveAccountFromSeriesKey,
   selectDrillDownRecords,
+  selectFlow,
+  signedAmount,
   summarize,
+  type Flow,
   type Granularity,
 } from '../lib/contributions';
+import { scopeRecords } from '../hooks/useAccountScope';
 import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
@@ -41,6 +46,15 @@ export interface ContributionStatsPageProps {
 const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
 type SeriesMode = 'total' | 'account';
+
+/** The three ledgers of the flow switch, in display order. */
+const FLOWS: Flow[] = ['deposits', 'withdrawals', 'net'];
+
+const FLOW_LABEL_KEY: Record<Flow, string> = {
+  deposits: 'viewDeposits',
+  withdrawals: 'viewWithdrawals',
+  net: 'viewNet',
+};
 
 /** Labels the hero, matching the spending reports' small caps. */
 const HERO_LABEL_CLASS =
@@ -81,12 +95,22 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // one concrete month. Persisted in the same bridge as the privacy toggle.
   const { selection, range, setInterval, setMonth } = usePersistedWindow(ctx);
 
+  // Investment and cash accounts only: the two account groups the flow ledger
+  // is meaningful for. Credit-card rows never reach the aggregation below.
+  // `scopeDegraded` means no account type could be read at all, so the gate is
+  // open and the page says so rather than implying the exclusion still holds.
+  const { includedIds, degraded: scopeDegraded } = useAccountScope(ctx);
+
   // `locale` only labels the buckets now; amounts and dates come from the host
   // formatters above. Regional aliases are already normalised by the SDK.
   const locale = language || 'en';
   const { loading, error, records, granularity, setGranularity } = useContributions(ctx, locale);
 
   const [seriesMode, setSeriesMode] = React.useState<SeriesMode>('total');
+  // Which ledger the page shows: deposits, withdrawals, or the signed net of
+  // both. Layout mirrors the visibility switch so the meaning of every other
+  // control on the page is now "of the selected flow".
+  const [flow, setFlow] = React.useState<Flow>('deposits');
   const [drillDown, setDrillDown] = React.useState<{
     periodKey: string;
     periodLabel: string;
@@ -109,18 +133,25 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const autoCurrency = React.useMemo(() => {
     const totals = new Map<string, number>();
     for (const record of records) {
-      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.amount);
+      const signed = signedAmount(record, flow);
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + signed);
     }
-    const best = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0];
+    // Largest by absolute volume, so a dominant withdrawal currency also wins.
+    const best = Array.from(totals.entries()).sort(
+      (a, b) => Math.abs(b[1]) - Math.abs(a[1]),
+    )[0];
     return best?.[0] ?? 'PLN';
-  }, [records]);
+  }, [records, flow]);
 
   const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
   const currency = currencyChoice ?? autoCurrency;
 
   const currencyRecords = React.useMemo(
-    () => records.filter((record) => record.currency === currency),
-    [records, currency],
+    () => scopeRecords(
+      records.filter((record) => record.currency === currency),
+      includedIds,
+    ),
+    [records, currency, includedIds],
   );
 
   // The earliest month with a deposit in this currency, bounding the month
@@ -169,21 +200,87 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     () => filterByRange(currencyRecords, range),
     [currencyRecords, range],
   );
-  const stats = React.useMemo(() => summarize(scoped), [scoped]);
+
+  // Which flows exist decides whether the flow switch means anything: a ledger of
+  // deposits alone has no second side to switch to.
+  //
+  // This reads the **loaded records, not the window**. It used to read `scoped`,
+  // and that was the bug in two directions: narrowing the range emptied the
+  // window, `hasWithdrawals` went false, and the switch the user was holding
+  // disappeared. Whether a *second ledger exists at all* is a property of the
+  // data, not of the period being viewed — the period decides whether that
+  // ledger has anything to show, which is a separate question and is answered by
+  // rendering an empty chart, not by deleting the control that reaches it.
+  const hasWithdrawals = React.useMemo(
+    () => records.some((record) => record.flow === 'withdrawals'),
+    [records],
+  );
+
+  // Everything below aggregates the flow the user picked, `flow`, with no
+  // intermediate name that could resolve to something else. There is no
+  // `effectiveFlow`: a window without withdrawals shows an empty withdrawals
+  // ledger, which is the answer to the question that was asked. Substituting the
+  // side that does have records would relabel the hero total, the buckets, the
+  // split and the drill-down behind the user's back.
+
+  // `summarize` signs but does not filter, so the single-flow views get exactly
+  // their side of the ledger first; the net view keeps both.
+  const flowRecords = React.useMemo(
+    () => selectFlow(scoped, flow),
+    [scoped, flow],
+  );
+
+  const stats = React.useMemo(
+    () => summarize(flowRecords, flow),
+    [flowRecords, flow],
+  );
   const buckets = React.useMemo(
-    () => fillGaps(bucketize(scoped, granularity, locale), granularity, locale),
-    [scoped, granularity, locale],
+    () =>
+      fillGaps(
+        bucketize(
+          flowRecords,
+          granularity,
+          locale,
+          flow,
+        ),
+        granularity,
+        locale,
+      ),
+    [flowRecords, granularity, locale, flow],
   );
 
+  // The split carries both flows under the net lead, so each bucket holds the
+  // signed value of its account for the period. It takes the *filtered*
+  // `flowRecords`, not `scoped`: under the deposits or withdrawals view an
+  // unfiltered list leaks the opposite flow into the stack, which is exactly
+  // how the withdrawals chart ended up reading deposits' bars.
   const split = React.useMemo(
-    () => bucketizeByAccount(scoped, granularity, locale),
-    [scoped, granularity, locale],
+    () => bucketizeByAccount(flowRecords, granularity, locale, flow),
+    [flowRecords, granularity, locale, flow],
   );
 
-  // Splitting is meaningless with a single account, so the control only appears
-  // once there is something to split.
-  const canSplit = split.accounts.length > 1;
-  const splitMode: SeriesMode = canSplit && seriesMode === 'account' ? 'account' : 'total';
+  // Splitting needs more than one account, so the control only appears once there
+  // is something to split — and that is counted over the **loaded records**, not
+  // the window. Gating on `split.accounts` (window-scoped) deleted the switch
+  // the user was holding the moment they narrowed the range to a period with no
+  // records, stranding them in per-account mode with no way out. Same root cause
+  // as the flow switch above: capability is a property of the data, emptiness is
+  // a property of the period.
+  const canSplit = React.useMemo(
+    () => new Set(records.map((record) => record.accountId)).size > 1,
+    [records],
+  );
+
+  // The user's selection is honoured even when the window holds nothing to split.
+  // An empty per-account chart is the honest rendering of an empty period; the
+  // alternative — quietly falling back to the total view — is the silent swap
+  // this page stopped doing for ledgers, and it would be worse here.
+  const splitMode: SeriesMode = seriesMode;
+
+  // The withdrawals ledger reads as spending, not growth: the chart palette
+  // shifts so the bars do not read as "money added". The net view keeps the
+  // contributory green, because its bars stay meaningful in both directions.
+  const chartColorOffset = flow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
   const { rows, series } = React.useMemo(() => {
     if (splitMode === 'account') {
@@ -208,17 +305,21 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       series: [
         {
           dataKey: 'total',
-          label: t('totalContributions'),
-          ...seriesColor(0),
+          label:
+            flow === 'withdrawals' ? t('viewWithdrawals')
+              : flow === 'net' ? t('netFlow')
+              : t('totalContributions'),
+          ...seriesColor(chartColorOffset),
         },
       ],
     };
-  }, [splitMode, split, buckets, t]);
+  }, [splitMode, split, buckets, t, flow]);
 
-  // Toggling back to the total view after splitting is the expected round trip.
-  React.useEffect(() => {
-    if (!canSplit && seriesMode === 'account') setSeriesMode('total');
-  }, [canSplit, seriesMode]);
+  // There is deliberately no effect forcing `seriesMode` back to `total` when
+  // `canSplit` goes false. That round trip was the bug: `canSplit` is scoped to
+  // the window, so narrowing the range emptied it, the effect reset the mode,
+  // and the control the user was holding disappeared in the same commit that
+  // emptied it. The user's selection is now theirs to change.
 
   const handleBarClick = React.useCallback(
     (info: BarClickInfo) => {
@@ -257,20 +358,20 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // change re-reads the new range rather than showing the old one's deposits.
   React.useEffect(() => {
     setDrillDown(null);
-  }, [granularity, splitMode, currency]);
+  }, [granularity, splitMode, currency, flow]);
 
-  // The panel must list exactly the deposits the clicked bar is built from, so
+  // The panel must list exactly the flows the clicked bar is built from, so
   // the selector applies the same window the chart was built from. It takes the
   // window rather than an already-scoped list, so the two cannot drift apart and
   // a test can cover the scoping instead of trusting this call site.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity);
-  }, [drillDown, currencyRecords, range, granularity]);
+    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, flow);
+  }, [drillDown, currencyRecords, range, granularity, flow]);
 
   const drillDownTotal = React.useMemo(
-    () => drillDownRecords.reduce((sum, r) => sum + r.amount, 0),
-    [drillDownRecords],
+    () => drillDownRecords.reduce((sum, r) => sum + signedAmount(r, flow), 0),
+    [drillDownRecords, flow],
   );
 
   const rangeLabel =
@@ -286,29 +387,55 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       <section className="rounded-xl border bg-card p-4 shadow-xs md:p-5">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className={HERO_LABEL_CLASS}>{t('totalContributions')}</p>
+            <p className={HERO_LABEL_CLASS}>
+              {flow === 'withdrawals' ? t('totalWithdrawn')
+                : flow === 'net' ? t('netFlow')
+                : t('totalContributions')}
+            </p>
             {/* The host mask is shorter than a real total, so the slot keeps a
                 minimum width and toggling does not shift the block. */}
             <p className="tabular-nums min-w-[9ch] text-3xl font-bold">
               <AmountDisplay value={stats.total} currency={currency} isHidden={amountsHidden} />
             </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
+            {/* What the numbers cover. The excluded-account note is the rule; the
+                degraded one replaces it when the account types could not be read
+                and the exclusion is therefore not being applied. */}
+            <p
+              className={
+                scopeDegraded
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              {scopeDegraded ? t('scopeUnavailable') : t('barredByScope')}
+            </p>
           </div>
 
           <div className="flex items-start gap-4">
             <dl className="flex gap-6 text-right">
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('contributionCount')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {flow === 'withdrawals' ? t('withdrawalCount') : t('contributionCount')}
+                </dt>
                 <dd className="tabular-nums font-semibold">{stats.count}</dd>
               </div>
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('averagePerDeposit')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {flow === 'withdrawals'
+                    ? t('averagePerWithdrawal')
+                    : flow === 'net'
+                      ? t('averagePerDeposit')
+                      : t('averagePerDeposit')}
+                </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay value={stats.average} currency={currency} isHidden={amountsHidden} />
                 </dd>
               </div>
               <div>
-                <dt className={HERO_LABEL_CLASS}>{t('averageMonthly')}</dt>
+                <dt className={HERO_LABEL_CLASS}>
+                  {flow === 'net' ? t('netMonthly') : t('averageMonthly')}
+                </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay
                     value={stats.monthlyAverage}
@@ -388,6 +515,36 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             </Tabs>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* The three ledgers: deposits, withdrawals and their signed net. A ledger of
+              deposits alone has no second side to switch to, so the switch waits
+              for a withdrawal to exist — **but not once the user is holding one
+              of the other two**. `hasWithdrawals` is scoped to the window, and
+              narrowing the range empties it, which deleted the switch and left
+              the user in a ledger they could not leave. The guard is on the
+              user's own selection, so it survives in both directions. Nothing
+              here changes the selection: an empty ledger stays empty. */}
+              {(hasWithdrawals || flow !== 'deposits') && (
+                <ToggleGroup
+                  type="single"
+                  size="sm"
+                  value={flow}
+                  onValueChange={(value) => {
+                    if (value) setFlow(value as Flow);
+                  }}
+                >
+                  {FLOWS.map((value) => (
+                    <ToggleGroupItem
+                      key={value}
+                      value={value}
+                      variant="outline"
+                      aria-label={t(FLOW_LABEL_KEY[value])}
+                    >
+                      {t(FLOW_LABEL_KEY[value])}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              )}
+
               {currencies.length > 1 && (
                 <ToggleGroup
                   type="single"
@@ -426,7 +583,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           </div>
 
           {rows.length === 0 ? (
-            <p className="mt-4 text-muted-foreground text-sm">{t('noContributions')}</p>
+            // Says which ledger is empty. "No contributions" under a withdrawals
+            // heading answers a question nobody asked.
+            <p className="mt-4 text-muted-foreground text-sm">
+              {flow === 'withdrawals' ? t('noWithdrawals') : t('noContributions')}
+            </p>
           ) : (
             <div className="mt-4">
               <ContributionChart
@@ -434,6 +595,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 series={series}
                 formatValue={displayValue}
                 formatTick={formatTick}
+                colorOffset={chartColorOffset}
                 hideAxis={amountsHidden}
                 onBarClick={handleBarClick}
               />
@@ -450,6 +612,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         records={drillDownRecords}
         periodLabel={drillDown?.periodLabel ?? ''}
         accountName={drillDown?.accountName}
+        flow={flow}
         total={drillDownTotal}
         currency={currency}
         amountsHidden={amountsHidden}

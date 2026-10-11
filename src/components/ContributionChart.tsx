@@ -50,6 +50,12 @@ export interface ContributionChartProps {
   /** Compact axis ticks; the currency belongs in the tooltip, not on every tick. */
   formatTick: (value: number) => string;
   /**
+   * Colour the series with the withdrawn palette instead of the contributory
+   * one: same index mapping (the first series gets slot 0), so a total view of
+   * withdrawals is rose/spending-coloured, not the green of growth.
+   */
+  colorOffset?: number;
+  /**
    * Hides the value axis while amounts are masked. A masked tick would still
    * spell out its unit (`••• mln`), so the axis goes away instead of being
    * masked — the same choice the host's net-worth chart makes.
@@ -98,10 +104,10 @@ export function seriesColor(index: number): { light: string; dark: string } {
  * config into `--color-<key>`, so a token-based colour leaves `fill` unresolved
  * and the bars render black whenever the token is missing.
  */
-function buildConfig(series: ChartSeries[]): ChartConfig {
+function buildConfig(series: ChartSeries[], colorOffset = 0): ChartConfig {
   const config: ChartConfig = {};
   series.forEach((item, index) => {
-    const color = seriesColor(index);
+    const color = seriesColor(index + colorOffset);
     config[item.dataKey] = {
       label: item.label,
       theme: { light: color.light, dark: color.dark },
@@ -252,6 +258,7 @@ export function ContributionChart({
   series,
   formatValue,
   formatTick,
+  colorOffset = 0,
   hideAxis = false,
   onBarClick,
 }: ContributionChartProps) {
@@ -360,7 +367,7 @@ export function ContributionChart({
       }}
     >
       <ChartContainer
-        config={buildConfig(series)}
+        config={buildConfig(series, colorOffset)}
         className="h-[280px] w-full aspect-auto"
       >
         <BarChart data={rows} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>

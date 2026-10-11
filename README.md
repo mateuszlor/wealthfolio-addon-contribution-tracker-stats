@@ -30,6 +30,36 @@ This addon answers that question:
 - **Average per month** — the mean monthly pace across the selected range
 - **A bar chart** you can regroup by month, day or year
 
+### Withdrawals and the net flow
+
+Where the money was *added* is only half the ledger. Once your records include
+**withdrawals** — real money taken out of an investment or cash account — a
+**Wpłaty / Wypłaty / Netto** switch appears next to the grouping tabs:
+
+- **Wpłaty** — the default view, exactly as before
+- **Wypłaty** — only withdrawals: total withdrawn, count, average per withdrawal
+- **Netto** — contributions minus withdrawals, so the chart shows how the
+  ledger actually moved
+
+Two definitions matter:
+
+- A withdrawal is an activity of type `WITHDRAWAL`. Transfers between your own
+  accounts (`TRANSFER_IN` / `TRANSFER_OUT`) are **never** counted in either
+  direction — they are not new money arriving nor a real outflow.
+- Only **investment and cash** accounts are on the ledger. A credit card is not
+  a withdrawal source: money spent on it is spending, not money leaving your
+  savings, so credit-card activity is kept off every view. The addon reads your
+  account types for this, which is the second permission it requests. If that
+  read fails, the page keeps its numbers and says so in a warning rather than
+  going blank.
+
+Each view shows what you asked for. Pick *Withdrawals* in a period that has none
+and you get an empty withdrawals ledger saying so — the page never swaps in a
+ledger that happens to have data.
+
+In the *Netto* view the drill-down panel lists both directions at once, with a
+`+` / `−` marker per row and a signed total.
+
 Two figures that look similar but are not: *average per deposit* divides the sum by the
 number of deposits, while *average per month* divides it by the number of months in the
 range. With irregular deposits they can differ several-fold.
@@ -99,7 +129,8 @@ never writes to it, so removing it leaves no trace in your portfolio.
 
 ## Troubleshooting
 
-**The chart is empty.** The addon counts only activities of type `DEPOSIT`. If your
+**The chart is empty.** The addon counts only activities of type `DEPOSIT` (and,
+in the withdrawals view, `WITHDRAWAL`). If your
 deposits were imported as something else (for example `TRANSFER_IN` or plain transfers),
 they are not picked up. Check the Activities page and adjust the import, or open the
 browser console and look for the addon's diagnostic line:
@@ -116,8 +147,10 @@ The choice is remembered for this add-on, so it also survives a reload of the pa
 
 ## Privacy and data
 
-The addon requests a single permission: `activities.getAll`. It uses it to read your
-deposits and nothing else. No data leaves your machine — the addon has no network access,
+The addon requests two permissions: `activities.getAll`, to read your deposit and
+withdrawal activities, and `accounts.getAll`, to read the account *types* so that
+credit-card activity stays off the investment and cash ledger. It uses them for
+nothing else. No data leaves your machine — the addon has no network access,
 no analytics and no third-party dependencies at runtime.
 
 ## Contributing

@@ -28,7 +28,18 @@
   "permissions": [
     {
       "category": "activities",
-      "purpose": "Reads deposit activities to calculate contribution statistics.",
+      "purpose": "Reads deposit and withdrawal activities to calculate contribution statistics.",
+      "functions": [
+        {
+          "name": "getAll",
+          "isDeclared": true,
+          "isDetected": true
+        }
+      ]
+    },
+    {
+      "category": "accounts",
+      "purpose": "Reads account types so credit-card activity is kept out of the investment and cash ledger.",
       "functions": [
         {
           "name": "getAll",

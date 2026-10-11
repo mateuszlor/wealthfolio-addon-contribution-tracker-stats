@@ -11,11 +11,23 @@ the human picks the file and the agent waits.
 ## The division of labour
 
 **The maintainer signs in, picks the ZIP file, and clicks the bar.** Everything else the agent
-does.
+does — including opening the install dialog itself, which is a page click, not a native one.
 
 Never type into the login form and never guess a password. The session may also be absent
 entirely, in which case the addon route renders a blank frame and every later step fails for
 the wrong reason. Confirm a signed-in session before anything else — see step 2.
+
+### Click what you can reach; ask only for what needs a human
+
+The dividing line is the **native dialog**, not "the install". Opening *Install from File* is
+ordinary page automation and belongs to the agent. Choosing the file inside the OS picker, and
+clicking a chart bar, are not — no `evaluate` reaches them, and pretending otherwise is how a
+session ends with a confident wrong answer.
+
+Reporting a file path and stopping, while a click away from the dialog was still available, is
+the failure this section exists to prevent. Do the part that is yours, then ask. It cost a round
+trip once already: the agent handed over the path and stopped, and the maintainer had to come
+back and say the button had never been clicked.
 
 ### The bar click is a human action, and that is the point
 
@@ -81,32 +93,61 @@ already installed. Pick anything above the installed version, e.g. `1.0.5`.
 
 Output: `release/contribution-tracker-stats-<v>.zip` plus `contribution-tracker-stats.zip`.
 
-### 4. Hand over, and wait
+### 4. Open the install dialog yourself, then wait
 
-Report the absolute path of `contribution-tracker-stats.zip` and **stop**. The maintainer
-selects it. Resume only when they say the install is done.
+**Click first, ask second.** Opening the dialog is the agent's job, and stopping one step short
+of it — reporting a path and waiting to be told to click a button you can already reach — wastes
+the maintainer's turn and reads as not having tried.
 
-This is the step that cannot be automated: *Install from File* opens the OS file picker, and
-the dialog contains no `<input type=file>` in the DOM for automation to fill.
+1. Open `<HOST>/settings/addons`.
+2. Click **Install from File**.
+3. Report the absolute path of `contribution-tracker-stats.zip` and **stop**.
 
-### 5. Install
+The button carries no visible `+`, and *Browse Add-ons* beside it is the marketplace, not a
+local upload — there is no local ZIP anywhere in the marketplace flow.
 
 ```js
 await tools["browser"].tabs.open({ url: "<HOST>/settings/addons", focus: true })
+await tools["browser"].evaluate({
+  tabID,
+  script: `(() => {
+    const all = [...document.querySelectorAll('button')];
+    const browse = all.findIndex((b) => (b.innerText || '').trim() === 'Browse Add-ons');
+    if (browse < 1) return 'layout changed';
+    all[browse - 1].click();          // the + immediately left of Browse Add-ons
+    return 'clicked';
+  })()`
+})
 ```
 
-The button is labelled **Install from File**. It is easy to miss because it carries no visible
-`+`, and *Browse Add-ons* next to it is the marketplace, not a local upload — there is no local
-ZIP anywhere in the marketplace flow.
+**Anchor on position, not on the accessibility label.** On this host the button's `aria-label`
+is empty, `snapshot` returns a nearly empty tree with no ref pointing at it, and `find` on the
+label finds nothing. `all[browse - 1]` was the only selector that worked. Do not conclude the
+button is missing when the tree says so — that is the instrument, and the screenshot outranks it.
+
+The click opens the OS file picker, which is a **native dialog**: it is not in the DOM, it does
+not appear in a screenshot of the page, and no `evaluate` can reach it. Only `Approve & Install`
+afterwards is in the page and clickable. So after step 3 the agent genuinely has nothing left to
+do — the maintainer picks the file and approves, and the agent waits.
+
+This cost a round trip once: the agent reported the path and stopped without clicking, and the
+maintainer had to come back and say so. Open the dialog before handing over.
+
+### 5. Verify the install
 
 ```js
-// then, once the file is chosen, the dialog previews the parsed manifest:
-await tools["browser"].evaluate({ tabID, script: `... find button matching /Approve & Install/ ... click()` })
+// then, once the file is chosen and approved, the installed list carries the version:
+await tools["browser"].evaluate({
+  tabID,
+  script: `document.body.innerText.match(/Contribution Tracker Stats\\s+v[\\d.]+/)`
+})
 ```
 
 Success reads `Contribution Tracker Stats v<v>` and `Addon installed successfully` in the
 installed list. **Read the installed version back** — if it is not the one you just built, stop,
-because everything after this point would be testing the old build.
+because everything after this point would be testing the old build. Comparing the build's own
+`manifest.json` version against that string is the check, and it caught a session that was about
+to measure a build from three commits earlier.
 
 ### 6. Open the addon and find the sandbox frame
 
@@ -163,7 +204,38 @@ await tools["browser"].evaluate({ tabID, frameID, script: `JSON.stringify({
 })` })
 ```
 
-An open sheet is a `[data-side]` element with `data-state="open"`.
+**Do not select on `[data-side]`.** This Radix build does not emit it — the open panel measured
+here carried `role="dialog"`, `data-state="open"` and `class="fixed z-50 …"`, and **no
+`data-side` attribute at all**. A read written against `[data-side]` returns `[]` with the panel
+wide open, which is the exact false negative this step exists to prevent. Use:
+
+```js
+await tools["browser"].evaluate({ tabID, frameID, script: `(() => {
+  const d = document.querySelector('[role=dialog][data-state=open]');
+  return d ? d.innerText.slice(0, 200) : 'NO PANEL';
+})()` })
+```
+
+Two more traps when reading the panel's contents, both of which produce a wrong number rather
+than an obvious error:
+
+- The row signs are **`+` (U+002B) and `−` (U+2212, a real minus sign), not an ASCII hyphen**.
+  A regex over `[+-]` silently drops every withdrawal row, so the row count comes out short and
+  the sum will not match. `DrillDownPanel` picks the glyph from `record.flow`.
+- Amounts use the **host's** locale separators. Under `uiLocale=en` that is `16,620.45` — a
+  comma for thousands. Replacing `,` with `.` before parsing turns the total into `16.62` and
+  every comparison against the header fails.
+
+Correct sign and correct locale parse, then compare the sum against the panel's own header — that
+is the check that proves the panel is listing the right records:
+
+```js
+const re = /^(\w{3} \d{1,2}, \d{4})([+−])$/;   // note U+2212
+const num = (s) => parseFloat(s.replace(/PLN\s*/g, '').replace(/,/g, ''));
+```
+
+A healthy net panel reads: caption `Net · N transactions`, a signed total, N rows each with a
+date, an account name and a signed amount, and the row sum equal to the header total.
 
 ### When the panel does not open
 

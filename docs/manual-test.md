@@ -204,7 +204,38 @@ await tools["browser"].evaluate({ tabID, frameID, script: `JSON.stringify({
 })` })
 ```
 
-An open sheet is a `[data-side]` element with `data-state="open"`.
+**Do not select on `[data-side]`.** This Radix build does not emit it — the open panel measured
+here carried `role="dialog"`, `data-state="open"` and `class="fixed z-50 …"`, and **no
+`data-side` attribute at all**. A read written against `[data-side]` returns `[]` with the panel
+wide open, which is the exact false negative this step exists to prevent. Use:
+
+```js
+await tools["browser"].evaluate({ tabID, frameID, script: `(() => {
+  const d = document.querySelector('[role=dialog][data-state=open]');
+  return d ? d.innerText.slice(0, 200) : 'NO PANEL';
+})()` })
+```
+
+Two more traps when reading the panel's contents, both of which produce a wrong number rather
+than an obvious error:
+
+- The row signs are **`+` (U+002B) and `−` (U+2212, a real minus sign), not an ASCII hyphen**.
+  A regex over `[+-]` silently drops every withdrawal row, so the row count comes out short and
+  the sum will not match. `DrillDownPanel` picks the glyph from `record.flow`.
+- Amounts use the **host's** locale separators. Under `uiLocale=en` that is `16,620.45` — a
+  comma for thousands. Replacing `,` with `.` before parsing turns the total into `16.62` and
+  every comparison against the header fails.
+
+Correct sign and correct locale parse, then compare the sum against the panel's own header — that
+is the check that proves the panel is listing the right records:
+
+```js
+const re = /^(\w{3} \d{1,2}, \d{4})([+−])$/;   // note U+2212
+const num = (s) => parseFloat(s.replace(/PLN\s*/g, '').replace(/,/g, ''));
+```
+
+A healthy net panel reads: caption `Net · N transactions`, a signed total, N rows each with a
+date, an account name and a signed amount, and the row sum equal to the header total.
 
 ### When the panel does not open
 

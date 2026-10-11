@@ -34,6 +34,8 @@ export const translations: Record<string, AddonTranslationBundle> = {
     viewWithdrawals: 'Withdrawals',
     viewNet: 'Net',
     viewAllCurrency: 'ALL ({{code}})',
+    conversionUnavailable:
+      'Showing {{currency}} only — converting everything to the base currency is unavailable ({{reason}}).',
     conversionDropped_one: '{{count}} transaction had no exchange rate for its date and is excluded from this view.',
     conversionDropped_other: '{{count}} transactions had no exchange rate for their dates and are excluded from this view.',
     totalWithdrawn: 'Total withdrawn',
@@ -87,6 +89,8 @@ export const translations: Record<string, AddonTranslationBundle> = {
     viewWithdrawals: 'Wypłaty',
     viewNet: 'Netto',
     viewAllCurrency: 'WSZYSTKO ({{code}})',
+    conversionUnavailable:
+      'Pokazujemy tylko {{currency}} — przeliczanie wszystkiego na walutę bazową jest niedostępne ({{reason}}).',
     conversionDropped_one: '{{count}} transakcja nie ma kursu na swoją datę i jest wyłączona z tego widoku.',
     conversionDropped_few: '{{count}} transakcje nie mają kursu na swoje daty i są wyłączone z tego widoku.',
     conversionDropped_many: '{{count}} transakcji nie ma kursu na swoje daty i jest wyłączonych z tego widoku.',

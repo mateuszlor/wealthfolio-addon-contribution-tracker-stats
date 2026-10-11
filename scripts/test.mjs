@@ -1361,6 +1361,51 @@ test('the gate is open, but not ready, before the bridge answers', () => {
 
 /* ------------------------------------------------- no silent ledger swap */
 
+test('a requested-but-unavailable conversion explains itself instead of reading zero', async () => {
+  // Regression, measured on a real host: `ALL (PLN)` was selectable, `viewCurrency`
+  // resolved to `null`, and `records.filter(r => r.currency === null)` matched
+  // nothing. The page rendered `PLN 0.00` and zero contributions with no message
+  // — indistinguishable from "you have no contributions". A plausible wrong total
+  // is worse than a missing feature, so the fallback must be a real currency and
+  // must be stated.
+  const source = (
+    await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8')
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+  assert.doesNotMatch(
+    source,
+    /viewCurrency = allRequested \? null/,
+    'viewCurrency must never be null: a null currency filters every record away',
+  );
+  assert.match(
+    source,
+    /const conversionBlocked = allRequested && !conversionAvailable/,
+    'the page must know when the conversion it was asked for is unavailable',
+  );
+  assert.match(
+    source,
+    /conversionBlocked && convertStatus !== 'loading'/,
+    'the unavailable conversion must be explained on screen',
+  );
+
+  // The hook must name the reason rather than swallowing it into a comment: an
+  // unnamed failure is what produced a silent zero in the first place.
+  const hook = (
+    await readFile(path.join(ROOT, 'src/hooks/useConvertedRecords.ts'), 'utf8')
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const status of [
+    'no-settings-bridge',
+    'settings-rejected',
+    'no-base-currency',
+    'no-rate-bridge',
+    'rates-rejected',
+  ]) {
+    assert.ok(hook.includes(status), `${status} must be a nameable outcome`);
+  }
+});
+
 test('the page has no alternate ledger to fall back to', async () => {
   // The silent swap lived in the *component*, so no test over the pure modules
   // could see it — the mutation run put a fallback straight back into

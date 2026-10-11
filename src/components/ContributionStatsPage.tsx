@@ -155,7 +155,6 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
 
   const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
   const allRequested = currencyChoice === CURRENCY_ALL;
-  const viewCurrency = allRequested ? null : currencyChoice ?? autoCurrency;
 
   /**
    * Conversion only runs while the ALL view is on. The hook returns `undefined`
@@ -164,9 +163,35 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
    *
    * `dropped` — rows the bridge could not price — is surfaced next to the
    * interval bar, the same way `intake` explains an unexpectedly small total.
+   * `status` is the reason the view is unavailable when it is, which is what
+   * `conversionBlocked` below turns into an explanation.
    */
-  const { records: allRecords, dropped: convertDropped, baseCurrency } = useConvertedRecords(ctx, records);
-  const conversionVisible = allRequested && baseCurrency !== undefined;
+  const {
+    records: allRecords,
+    dropped: convertDropped,
+    baseCurrency,
+    status: convertStatus,
+  } = useConvertedRecords(ctx, records);
+
+  const conversionAvailable = baseCurrency !== undefined && allRecords !== undefined;
+  const conversionVisible = allRequested && conversionAvailable;
+
+  /**
+   * A requested-but-unavailable conversion must never render as an empty ledger.
+   *
+   * This shipped broken on a real host: `ALL (PLN)` was selectable, `viewCurrency`
+   * became `null`, and `records.filter(r => r.currency === null)` matched nothing —
+   * so the page reported `PLN 0.00` and zero contributions, which reads as "you
+   * have no contributions" rather than "this view is broken". A wrong total that
+   * looks plausible is worse than a missing feature, so when the conversion
+   * cannot be shown the page falls back to a real currency and says why.
+   */
+  const conversionBlocked = allRequested && !conversionAvailable;
+  const viewCurrency = conversionVisible
+    ? (baseCurrency ?? autoCurrency)
+    : currencyChoice === CURRENCY_ALL
+      ? autoCurrency
+      : currencyChoice ?? autoCurrency;
 
   // What the rest of the page sees: either the per-currency slice (the old
   // path, unchanged) or the host-converted whole in the base currency.
@@ -183,10 +208,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [records, viewCurrency, includedIds, conversionVisible, scopedRecords],
   );
 
-  // The ALL view reports its currency through the host setting, not through
-  // `viewCurrency` (which is null there): the hero, axis and drill-down all
-  // format through this one binding, so the whole page flips in one place.
-  const currency = allRequested ? (baseCurrency ?? 'PLN') : (viewCurrency ?? 'PLN');
+  // The ALL view reports its currency through the host setting, so the hero, axis
+  // and drill-down all format through this one binding and the whole page flips
+  // in one place. When the conversion is blocked the page has fallen back to a
+  // real currency, so it formats as that instead of claiming the base.
+  const currency = conversionVisible ? (baseCurrency ?? 'PLN') : viewCurrency;
 
   // The earliest month with a deposit in this currency, bounding the month
   // switcher's back chevron.
@@ -508,6 +534,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         )}
 
         {loading && !error && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
+
+        {conversionBlocked && convertStatus !== 'loading' && (
+          <p role="status" className="text-muted-foreground text-xs">
+            {t('conversionUnavailable', { reason: convertStatus })}
+          </p>
+        )}
 
         {conversionVisible && convertDropped > 0 && (
           <p role="status" className="text-muted-foreground text-xs">

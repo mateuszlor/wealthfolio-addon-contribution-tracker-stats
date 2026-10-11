@@ -32,6 +32,43 @@ export interface ConvertedRecordsState {
   records: ContributionRecord[] | undefined;
   dropped: number;
   baseCurrency?: string;
+  /**
+   * Why the conversion view is or is not available.
+   *
+   * This exists because the view failed on a real host with **no symptom at
+   * all**: `ALL (PLN)` was selectable, the page rendered `PLN 0.00` with zero
+   * contributions, and nothing in the console said why. The base-currency read
+   * and the rate fetch both swallow their failures into an empty comment, which
+   * is exactly how a broken bridge becomes an indistinguishable "you have no
+   * contributions". Naming the reason lets the page explain itself and lets a
+   * host test assert on it instead of inferring from a zero.
+   */
+  status: ConvertStatus;
+}
+
+export type ConvertStatus =
+  | 'loading' // nothing has answered yet
+  | 'no-settings-bridge' // ctx.api.settings missing or has no get()
+  | 'settings-rejected' // the bridge threw or rejected
+  | 'no-base-currency' // the settings payload carried no baseCurrency
+  | 'no-rate-bridge' // ctx.api.exchangeRates missing, or no getRatesForDates
+  | 'rates-rejected' // the rate fetch threw or rejected
+  | 'ready'; // converted records available
+
+/**
+ * Reports a conversion failure to the host log.
+ *
+ * Failures here used to vanish into comments. `ctx.api.logger` is a baseline
+ * capability, so this needs no permission, and `addon.tsx` already forwards
+ * runtime errors the same way — a host that shows a blank feature should at
+ * least say which bridge answered.
+ */
+function report(ctx: AddonContext, status: ConvertStatus, detail?: unknown): void {
+  try {
+    ctx?.api?.logger?.warn?.(`[convert] ${status}${detail ? ` — ${String(detail)}` : ''}`);
+  } catch {
+    // Logging must never become the failure.
+  }
 }
 
 export function useConvertedRecords(
@@ -42,6 +79,7 @@ export function useConvertedRecords(
   const [out, setOut] = useState<ConvertedRecordsState>({
     records: undefined,
     dropped: 0,
+    status: 'loading',
   });
 
   // One settings read: the base currency only changes from the host page,
@@ -49,16 +87,32 @@ export function useConvertedRecords(
   useEffect(() => {
     let cancelled = false;
     const settings = ctx?.api?.settings;
-    if (!settings || typeof settings.get !== 'function') return;
+    if (!settings || typeof settings.get !== 'function') {
+      report(ctx, 'no-settings-bridge', `typeof ctx.api.settings = ${typeof settings}`);
+      if (!cancelled) setOut({ records: undefined, dropped: 0, status: 'no-settings-bridge' });
+      return;
+    }
 
     settings
       .get()
       .then((value: BaseSettings) => {
-        if (!cancelled) setCurrency(value?.baseCurrency);
+        // The bridge may hand back the settings object itself or something
+        // wrapping it, so the payload is probed rather than assumed.
+        const base = value?.baseCurrency;
+        if (!cancelled && !base) {
+          report(
+            ctx,
+            'no-base-currency',
+            `payload keys = ${JSON.stringify(Object.keys(value ?? {}))}`,
+          );
+          setOut({ records: undefined, dropped: 0, status: 'no-base-currency' });
+          return;
+        }
+        if (!cancelled) setCurrency(base);
       })
-      .catch(() => {
-        // Without the base currency the conversion view cannot be built;
-        // the page keeps showing the per-currency selector.
+      .catch((error: unknown) => {
+        report(ctx, 'settings-rejected', error);
+        if (!cancelled) setOut({ records: undefined, dropped: 0, status: 'settings-rejected' });
       });
 
     return () => {
@@ -79,7 +133,7 @@ export function useConvertedRecords(
     if (!currency || plan.length === 0) {
       // Nothing to convert (single currency already in base, or no records):
       // the conversion pass-through is synchronous and cheap.
-      setOut({ records, dropped: 0, baseCurrency: currency });
+      setOut({ records, dropped: 0, baseCurrency: currency, status: 'ready' });
       return;
     }
 
@@ -102,7 +156,13 @@ export function useConvertedRecords(
     if (typeof getRatesForDates !== 'function') {
       // Permission missing / SDK too old: no conversion is possible, same
       // graceful exit as above — the page falls back to per-currency view.
-      setOut({ records: undefined, dropped: 0, baseCurrency: currency });
+      report(ctx, 'no-rate-bridge', `plan=${plan.length} pairs`);
+      setOut({
+        records: undefined,
+        dropped: 0,
+        baseCurrency: currency,
+        status: 'no-rate-bridge',
+      });
       return;
     }
 
@@ -112,14 +172,35 @@ export function useConvertedRecords(
       .then((results: RateResult[]) => {
         if (seq !== sequences.current) return; // superseded by newer input
 
+        // The answer's shape decides whether conversion can work at all, and it
+        // is the one thing that cannot be checked from a type: the host may
+        // return fewer rows than asked, or a wrapper rather than a list.
+        report(
+          ctx,
+          'ready',
+          `asked=${plan.length} answered=${Array.isArray(results) ? results.length : 'not-a-list'} ` +
+            `first=${JSON.stringify(Array.isArray(results) ? results[0] : results)}`,
+        );
+
         const table = rateTableFromResults(plan, results);
         const outcome = convertRecords(records, currency, table);
-        setOut({ records: outcome.records, dropped: outcome.dropped, baseCurrency: currency });
+        setOut({
+          records: outcome.records,
+          dropped: outcome.dropped,
+          baseCurrency: currency,
+          status: 'ready',
+        });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // The bridge itself failed; same graceful exit.
+        report(ctx, 'rates-rejected', error);
         if (seq === sequences.current) {
-          setOut({ records: undefined, dropped: 0, baseCurrency: currency });
+          setOut({
+            records: undefined,
+            dropped: 0,
+            baseCurrency: currency,
+            status: 'rates-rejected',
+          });
         }
       });
   }, [ctx, records, currency, plan]);

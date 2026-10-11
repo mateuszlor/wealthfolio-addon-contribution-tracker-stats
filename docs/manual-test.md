@@ -101,7 +101,32 @@ the maintainer's turn and reads as not having tried.
 
 1. Open `<HOST>/settings/addons`.
 2. Click **Install from File**.
-3. Report the absolute path of `contribution-tracker-stats.zip` and **stop**.
+3. Report the absolute path of `contribution-tracker-stats.zip` and **wait** for the maintainer
+   to pick it in the OS dialog.
+4. **The dialog that comes back is yours to finish.** Once the file is chosen, the page shows a
+   manifest preview with an **Approve & Install** button, and that button is ordinary page DOM —
+   click it yourself. Only the OS file picker is beyond reach.
+
+Step 4 is the one that gets skipped, and skipping it is expensive: the install silently does not
+happen, the host keeps serving the previous version, and every later measurement is of the old
+build. That is not a hypothetical — it cost a full round trip here, where the agent reported the
+package as installed while the host was still on `v1.2.8`. The symptom is always the same and
+always misleading: **the installed list still shows the old version.** Read the version back
+before trusting anything.
+
+```js
+// after the maintainer has picked the file:
+await tools["browser"].evaluate({
+  tabID,
+  script: `(() => {
+    const btn = [...document.querySelectorAll('button')]
+      .find((b) => /approve/i.test(b.innerText || ''));
+    if (!btn) return 'NO APPROVE BUTTON - report what the dialog shows';
+    btn.click();
+    return 'approved';
+  })()`
+})
+```
 
 The button carries no visible `+`, and *Browse Add-ons* beside it is the marketplace, not a
 local upload — there is no local ZIP anywhere in the marketplace flow.
@@ -126,12 +151,14 @@ label finds nothing. `all[browse - 1]` was the only selector that worked. Do not
 button is missing when the tree says so — that is the instrument, and the screenshot outranks it.
 
 The click opens the OS file picker, which is a **native dialog**: it is not in the DOM, it does
-not appear in a screenshot of the page, and no `evaluate` can reach it. Only `Approve & Install`
-afterwards is in the page and clickable. So after step 3 the agent genuinely has nothing left to
-do — the maintainer picks the file and approves, and the agent waits.
+not appear in a screenshot of the page, and no `evaluate` can reach it. So between step 3 and
+step 4 the agent genuinely has nothing to do — the maintainer picks the file, and then the agent
+resumes to approve it. Asking the maintainer to click *Approve & Install* as well hands them two
+round trips for work that is one `evaluate` away.
 
-This cost a round trip once: the agent reported the path and stopped without clicking, and the
-maintainer had to come back and say so. Open the dialog before handing over.
+This cost a round trip twice: the agent reported the path and stopped without opening the dialog,
+and later opened the dialog but stopped without approving it. Both left the host on the previous
+version while the conversation said the install was done. Open the dialog before handing over.
 
 ### 5. Verify the install
 

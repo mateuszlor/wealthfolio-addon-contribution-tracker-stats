@@ -10,8 +10,6 @@ import {
   Tabs,
   TabsList,
   TabsTrigger,
-  ToggleGroup,
-  ToggleGroupItem,
   useAmountFormatting,
   useDateFormatting,
 } from '@wealthfolio/ui';
@@ -586,6 +584,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               </TabsList>
             </Tabs>
 
+            {/* Every switch on this row is the same control the granularity uses:
+            `Tabs` / `TabsList` / `TabsTrigger`. They were `ToggleGroup`s, which
+            render as separate rounded-outline pills — so the row read as four
+            unrelated clusters instead of one set of grouped choices. Radix Tabs
+            is also the honest primitive here: a single-selection switch that
+            cannot be deselected, which is exactly what these are. `TabsTrigger`
+            needs no `size`/`variant` — the list owns the shape. */}
             <div className="flex flex-wrap items-center gap-3">
               {/* The three ledgers: deposits, withdrawals and their signed net. A ledger of
               deposits alone has no second side to switch to, so the switch waits
@@ -596,67 +601,49 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               user's own selection, so it survives in both directions. Nothing
               here changes the selection: an empty ledger stays empty. */}
               {(hasWithdrawals || flow !== 'deposits') && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
-                  value={flow}
-                  onValueChange={(value) => {
-                    if (value) setFlow(value as Flow);
-                  }}
-                >
-                  {FLOWS.map((value) => (
-                    <ToggleGroupItem
-                      key={value}
-                      value={value}
-                      variant="outline"
-                      aria-label={t(FLOW_LABEL_KEY[value])}
-                    >
-                      {t(FLOW_LABEL_KEY[value])}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                <Tabs value={flow} onValueChange={(value) => setFlow(value as Flow)}>
+                  <TabsList>
+                    {FLOWS.map((value) => (
+                      <TabsTrigger key={value} value={value} aria-label={t(FLOW_LABEL_KEY[value])}>
+                        {t(FLOW_LABEL_KEY[value])}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
               )}
 
               {currencies.length > 1 && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
+                <Tabs
                   value={allRequested ? CURRENCY_ALL : currency}
-                  onValueChange={(value) => {
-                    if (value) setCurrencyChoice(value);
-                  }}
+                  onValueChange={(value) => setCurrencyChoice(value)}
                 >
-                  {currencies.map((code) => (
-                    <ToggleGroupItem key={code} value={code} variant="outline" aria-label={code}>
-                      {code}
-                    </ToggleGroupItem>
-                  ))}
-                  <ToggleGroupItem
-                    value={CURRENCY_ALL}
-                    variant="outline"
-                    aria-label={t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
-                  >
-                    {t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
-                  </ToggleGroupItem>
-                </ToggleGroup>
+                  <TabsList>
+                    {currencies.map((code) => (
+                      <TabsTrigger key={code} value={code} aria-label={code}>
+                        {code}
+                      </TabsTrigger>
+                    ))}
+                    <TabsTrigger
+                      value={CURRENCY_ALL}
+                      aria-label={t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                    >
+                      {t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               )}
 
               {canSplit && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
-                  value={splitMode}
-                  onValueChange={(value) => {
-                    if (value) setSeriesMode(value as SeriesMode);
-                  }}
-                >
-                  <ToggleGroupItem value="total" variant="outline" aria-label={t('viewTotal')}>
-                    {t('viewTotal')}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="account" variant="outline" aria-label={t('viewPerAccount')}>
-                    {t('viewPerAccount')}
-                  </ToggleGroupItem>
-                </ToggleGroup>
+                <Tabs value={splitMode} onValueChange={(value) => setSeriesMode(value as SeriesMode)}>
+                  <TabsList>
+                    <TabsTrigger value="total" aria-label={t('viewTotal')}>
+                      {t('viewTotal')}
+                    </TabsTrigger>
+                    <TabsTrigger value="account" aria-label={t('viewPerAccount')}>
+                      {t('viewPerAccount')}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               )}
             </div>
           </div>

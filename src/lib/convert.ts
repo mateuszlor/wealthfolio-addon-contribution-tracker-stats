@@ -75,21 +75,61 @@ function baseCurrencyNormalised(baseCurrency: string): string {
   return baseCurrency.trim().toUpperCase();
 }
 
-/** `from|to|date` -> rate, populated by the host's answer in order. */
+/**
+ * Builds the `from|to|date` -> rate table from the host's answer.
+ *
+ * Results are keyed by **the pair and date the result itself names**, never by
+ * its position in the array. `getRatesForDates` documents that it resolves
+ * "one result per requested pair, in the same order", so positional pairing is
+ * what the contract describes — but the result carries `fromCurrency`,
+ * `toCurrency` and `date` precisely so it can be matched on its own, and a
+ * silent mismatch here is the worst failure this module has: a 2023 deposit
+ * priced with the 2026 rate reads as a plausible number, not as a bug. Keying
+ * by identity costs nothing and cannot mis-price a record.
+ *
+ * A result naming a pair or date nobody asked for is **ignored**, and a result
+ * with no usable rate (`null`, `error`, non-finite, non-positive) leaves its
+ * key absent, so `convertRecords` drops that record rather than guessing.
+ *
+ * Note the one case this cannot resolve on its own: if the host resolves a
+ * missing day to a *nearest available quote* and echoes that quote's date
+ * instead of the requested one, the key will not match and the record is
+ * dropped. That failure is deliberate and visible — `dropped` grows and the
+ * page says so — where applying the wrong day's rate would be invisible. Which
+ * of the two the host actually does is a host measurement, not a guess.
+ */
 export function rateTableFromResults(
   queries: RateQuery[],
   results: RateResult[],
 ): Map<string, number> {
   const table = new Map<string, number>();
+  // Only pairs that were actually requested may enter the table, so a stray or
+  // padded result cannot introduce a key nothing will ever look up.
+  const requested = new Set(
+    queries.map((query) =>
+      rateKey(
+        baseCurrencyNormalised(query.fromCurrency),
+        baseCurrencyNormalised(query.toCurrency),
+        query.date,
+      ),
+    ),
+  );
 
-  queries.forEach((query, index) => {
-    const result = results[index]; // same order per the SDK contract
-    if (result && typeof result.rate === 'number' && Number.isFinite(result.rate) && result.rate > 0) {
-      table.set(`${query.fromCurrency}|${query.toCurrency}|${query.date}`, result.rate);
-    }
-    // null rate / error string: the pair stays absent, and `convertRecords`
-    // drops the record below rather than guessing.
-  });
+  for (const result of results ?? []) {
+    if (!result) continue;
+
+    const key = rateKey(
+      baseCurrencyNormalised(result.fromCurrency ?? ''),
+      baseCurrencyNormalised(result.toCurrency ?? ''),
+      result.date,
+    );
+    if (!requested.has(key)) continue;
+
+    const { rate } = result;
+    if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) continue;
+
+    table.set(key, rate);
+  }
 
   return table;
 }

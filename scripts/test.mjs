@@ -409,6 +409,71 @@ test('plans one (pair, day) per distinct currency+day, in base terms', () => {
   ], 'distinct (currency, day) pairs only, sorted and deduplicated');
 });
 
+test('a result is matched by the pair it names, not by its position', () => {
+  // The SDK documents "one result per requested pair, in the same order", so
+  // positional pairing satisfies the contract — but a result carries its own
+  // from/to/date precisely so it can be matched on identity, and pairing by
+  // index mis-prices silently when the host ever deviates: the record converts,
+  // the chart renders, and the number is simply wrong.
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05' },
+  ];
+
+  // Same set of results, deliberately reversed.
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05', rate: 3.9, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07', rate: 4.6, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5);
+  assert.equal(table.get('EUR|PLN|2026-01-07'), 4.6);
+  assert.equal(table.get('USD|PLN|2026-01-05'), 3.9);
+});
+
+test('a result naming a day nobody asked for is ignored, not applied', () => {
+  // The SDK mentions "nearest available quotes". If the host echoes the quote's
+  // own date rather than the requested one, pairing by identity must leave the
+  // pair absent so the record is dropped and counted — never priced with the
+  // wrong day's rate, which would look entirely plausible on screen.
+  const queries = [{ fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' }];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-06', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.has('EUR|PLN|2026-01-05'), false, 'a different day must not answer the query');
+  assert.equal(table.size, 0);
+});
+
+test('one failed pair cannot poison another by position', () => {
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05' },
+  ];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05', rate: null, error: 'no quote' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5, 'the resolvable pair keeps its own rate');
+  assert.equal(table.has('USD|PLN|2026-01-05'), false, 'the failed pair stays absent, not zero');
+});
+
+test('a result nobody requested never enters the table', () => {
+  const queries = [{ fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' }];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+    { fromCurrency: 'GBP', toCurrency: 'PLN', date: '2026-01-05', rate: 5.1, error: null },
+  ]);
+
+  assert.equal(table.size, 1, 'only the requested pair may be stored');
+});
+
 test('rates results become a table; unresolvable pairs stay absent', () => {
   const queries = [
     { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },

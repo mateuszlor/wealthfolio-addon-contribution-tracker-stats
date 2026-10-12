@@ -526,7 +526,7 @@ test('the page wiring: conversion is fed the bridge, the ALL sentinel returns to
   // sentinel is on.
   const source = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
 
-  assert.match(source, /useConvertedRecords\(ctx, records\)/, 'hook is called unconditionally');
+  assert.match(source, /useConvertedRecords\(ctx, stableRecords\)/, 'hook is called with stabilized records');
   assert.match(source, /CURRENCY_ALL/, 'the ALL sentinel exists');
   assert.match(source, /currencyChoice === CURRENCY_ALL/, 'the sentinel is switched on by selection');
 });

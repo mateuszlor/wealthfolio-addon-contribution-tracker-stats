@@ -77,6 +77,10 @@ request**, not only at the start. A session that merges work and then adds a fix
 branch must expect the first pull request to be gone; open a second one, or rebase the branch
 onto the updated `main` first so the fix is reviewable on its own.
 
+**Before posting any review comment: run `git fetch origin` and verify you're reviewing the
+latest remote HEAD.** A stale local ref makes review comments target old code, wasting
+maintainer time. This applies to **review sessions** same as push/PR creation.
+
 When work has to land on `main`, base it on the fetched `main`, not on whatever the branch
 happened to start from.
 

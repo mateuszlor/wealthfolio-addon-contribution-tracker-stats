@@ -2,7 +2,6 @@
   "name": "contribution-tracker-stats",
   "version": "1.0.1",
   "private": true,
-  "main": "src/addon.tsx",
   "type": "module",
   "description": "Wealthfolio addon: contribution statistics with month/day/year charts.",
   "license": "MIT",

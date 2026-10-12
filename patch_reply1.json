@@ -1,0 +1,1 @@
+{"body":"Confirmed — manifest.json already declares currency/getRatesForDates and settings/get at lines 52–72 (decc623). Nothing missing; blocker resolved by existing diff.\n\n— produced by agent · model openrouter/thinkingmachines/inkling-small:free"}

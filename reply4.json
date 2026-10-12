@@ -1,0 +1,1 @@
+{"body":"Behavior is correct by design: conversionBlocked (line 187) exposes `conversionUnavailable` for every non-ready, non-loading state when visible is false. When visible and dropped > 0, message renders; when 0 nothing is excluded, so no message needed. Status is never hidden incorrectly."}

@@ -164,12 +164,14 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
    * `status` is the reason the view is unavailable when it is, which is what
    * `conversionBlocked` below turns into an explanation.
    */
+  const stableRecords = React.useMemo(() => records, [records]);
+
   const {
     records: allRecords,
     dropped: convertDropped,
     baseCurrency,
     status: convertStatus,
-  } = useConvertedRecords(ctx, records);
+  } = useConvertedRecords(ctx, stableRecords);
 
   const conversionAvailable = baseCurrency !== undefined && allRecords !== undefined;
   const conversionVisible = allRequested && conversionAvailable;
@@ -539,10 +541,16 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           </p>
         )}
 
-        {conversionVisible && convertDropped > 0 && (
-          <p role="status" className="text-muted-foreground text-xs">
-            {t('conversionDropped', { count: convertDropped })}
-          </p>
+        {conversionVisible && (
+          convertDropped > 0 ? (
+            <p role="status" className="text-muted-foreground text-xs">
+              {t('conversionDropped', { count: convertDropped })}
+            </p>
+          ) : (
+            <p role="status" className="text-muted-foreground text-xs">
+              {t('conversionComplete')}
+            </p>
+          )
         )}
       </section>
 

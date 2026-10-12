@@ -1,0 +1,8 @@
+{
+    "body": "## Code Review: PR #9 - Missing currency Permission\n\nFile: manifest.json (permissions section)\n\nStatus: BLOCKER - Cannot merge without declaring `currency` category with `getRatesForDates` function.\n\n— produced by agent · model openrouter/nvidia/nemotron-3.5-lightning:free",
+    "commit_id": "decc623a659b49abf1fcdda94f7e9323da4281f4",
+    "path": "manifest.json",
+    "line": 53,
+    "side": "RIGHT",
+    "position": 1
+}

@@ -1,0 +1,1 @@
+{"body":"Fixed in commit 8b49ee6 — added defensive `default: return record.amount;` to `signedAmount`. TypeScript exhaustiveness covers Flow union, but runtime guard is now explicit.\n\n— produced by agent · model openrouter/thinkingmachines/inkling-small:free"}

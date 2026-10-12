@@ -1,0 +1,8 @@
+{
+    "body": "## Code Review: PR #9 - `useConvertedRecords` - `records` Identity Dependency Risk NOT FIXED\n\nFile: src/hooks/useConvertedRecords.ts:125-128\n\n```typescript\nconst plan = useMemo(\n  () => (currency ? planRateQueries(records, currency) : []),\n  [records, currency],\n);\n```\n\n❌ **NOT FIXED**: The PR response claims \"upstream `ContributionStatsPage` stabilizes `records` via `useMemo` (lines 133–149, [records] dependency)\" — **this is incorrect**.\n\n**Evidence**: `ContributionStatsPage.tsx` line 106 gets `records` directly from `useContributions` hook — **no `useMemo` wrapper exists**. The `useMemo` at lines 133-149 only wraps `currencies` and `autoCurrency`, NOT `records`.\n\n`useContributions.ts` line 97 returns `records` directly from state (line 40: `useState<ContributionRecord[]>([])`). Every parent re-render creates a new `records` array identity.\n\n**Impact**: `useConvertedRecords` will recalculate `plan` and potentially re-fetch rates on every render where the parent re-renders, causing unnecessary network overhead and potential race conditions.\n\n**Required fix**: Stabilize `records` identity either in `ContributionStatsPage` (e.g., `const stableRecords = useMemo(() => records, [records])`) or in `useContributions` hook itself.\n\nStatus: BLOCKER - Cannot merge without this.\n\n— produced by agent · model openrouter/nvidia/nemotron-3.5-lightning:free",
+    "commit_id": "8b49ee66e40a7c8154d26338c7f9af77316dea67",
+    "path": "src/hooks/useConvertedRecords.ts",
+    "line": 126,
+    "side": "RIGHT",
+    "position": 1
+}

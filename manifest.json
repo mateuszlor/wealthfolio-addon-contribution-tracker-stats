@@ -47,6 +47,28 @@
           "isDetected": true
         }
       ]
+    },
+    {
+      "category": "currency",
+      "purpose": "Looks up historical exchange rates so the ALL view can convert every contribution to the base currency using the host's own FX rules.",
+      "functions": [
+        {
+          "name": "getRatesForDates",
+          "isDeclared": true,
+          "isDetected": true
+        }
+      ]
+    },
+    {
+      "category": "settings",
+      "purpose": "Reads the base currency so the ALL (PLN) toggle labels itself with the host's setting.",
+      "functions": [
+        {
+          "name": "get",
+          "isDeclared": true,
+          "isDetected": true
+        }
+      ]
     }
   ],
   "contributes": {

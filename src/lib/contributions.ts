@@ -112,6 +112,8 @@ export function signedAmount(record: ContributionRecord, flow: Flow): number {
       return -record.amount;
     case 'net':
       return record.flow === 'withdrawals' ? -record.amount : record.amount;
+    default:
+      return record.amount;
   }
 }
 

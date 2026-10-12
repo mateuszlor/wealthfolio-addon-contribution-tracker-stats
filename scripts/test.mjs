@@ -377,6 +377,160 @@ test('the drill-down reset does not depend on the range', async () => {
   assert.doesNotMatch(deps, /range/, 'the range must not reset the panel: identity comparison closed it');
 });
 
+/* -------------------------------------------------------- currency convert */
+
+const { mod: convert, cleanup: cleanupConvert } = await loadTs('src/lib/convert.ts');
+
+const convRecord = (iso, amount, currency) => ({
+  date: new Date(iso),
+  amount,
+  flow: 'deposits',
+  currency,
+  accountId: 'acc-1',
+  accountName: 'Main',
+  activityId: '',
+});
+
+test('plans one (pair, day) per distinct currency+day, in base terms', () => {
+  const plan = convert.planRateQueries(
+    [
+      convRecord('2026-01-05T00:00:00Z', 100, 'EUR'),
+      convRecord('2026-01-05T10:00:00Z', 50, 'EUR'), // same day, deduped
+      convRecord('2026-01-06T00:00:00Z', 20, 'PLN'), // already base
+      convRecord('2026-01-07T00:00:00Z', 10, 'eur'), // case-normalised, deduped with the 5th
+      convRecord('2026-01-07T00:00:00Z', 5, 'PLN'),
+    ],
+    'PLN',
+  );
+
+  assert.deepEqual(plan, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+  ], 'distinct (currency, day) pairs only, sorted and deduplicated');
+});
+
+test('a result is matched by the pair it names, not by its position', () => {
+  // The SDK documents "one result per requested pair, in the same order", so
+  // positional pairing satisfies the contract — but a result carries its own
+  // from/to/date precisely so it can be matched on identity, and pairing by
+  // index mis-prices silently when the host ever deviates: the record converts,
+  // the chart renders, and the number is simply wrong.
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05' },
+  ];
+
+  // Same set of results, deliberately reversed.
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05', rate: 3.9, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07', rate: 4.6, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5);
+  assert.equal(table.get('EUR|PLN|2026-01-07'), 4.6);
+  assert.equal(table.get('USD|PLN|2026-01-05'), 3.9);
+});
+
+test('a result naming a day nobody asked for is ignored, not applied', () => {
+  // The SDK mentions "nearest available quotes". If the host echoes the quote's
+  // own date rather than the requested one, pairing by identity must leave the
+  // pair absent so the record is dropped and counted — never priced with the
+  // wrong day's rate, which would look entirely plausible on screen.
+  const queries = [{ fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' }];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-06', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.has('EUR|PLN|2026-01-05'), false, 'a different day must not answer the query');
+  assert.equal(table.size, 0);
+});
+
+test('one failed pair cannot poison another by position', () => {
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05' },
+  ];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'USD', toCurrency: 'PLN', date: '2026-01-05', rate: null, error: 'no quote' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5, 'the resolvable pair keeps its own rate');
+  assert.equal(table.has('USD|PLN|2026-01-05'), false, 'the failed pair stays absent, not zero');
+});
+
+test('a result nobody requested never enters the table', () => {
+  const queries = [{ fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' }];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+    { fromCurrency: 'GBP', toCurrency: 'PLN', date: '2026-01-05', rate: 5.1, error: null },
+  ]);
+
+  assert.equal(table.size, 1, 'only the requested pair may be stored');
+});
+
+test('rates results become a table; unresolvable pairs stay absent', () => {
+  const queries = [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05' },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07' },
+  ];
+
+  const table = convert.rateTableFromResults(queries, [
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-05', rate: 4.5, error: null },
+    { fromCurrency: 'EUR', toCurrency: 'PLN', date: '2026-01-07', rate: null, error: 'no quote' },
+  ]);
+
+  assert.equal(table.get('EUR|PLN|2026-01-05'), 4.5);
+  assert.equal(table.has('EUR|PLN|2026-01-07'), false, 'a failed pair must be absent, not zero');
+});
+
+test('convertRecords scales by the historical rate and reports drops', () => {
+  const records = [
+    convRecord('2026-01-05T00:00:00Z', 100, 'EUR'),
+    convRecord('2026-01-05T00:00:00Z', 500, 'PLN'),
+    convRecord('2026-01-07T00:00:00Z', 20, 'EUR'), // no rate for this date
+  ];
+
+  const rates = new Map([['EUR|PLN|2026-01-05', 4.5]]);
+  const { records: out, dropped } = convert.convertRecords(records, 'PLN', rates);
+
+  assert.deepEqual(
+    out.map((r) => ({ amount: r.amount, currency: r.currency, date: r.date })),
+    [
+      { amount: 450, currency: 'PLN', date: records[0].date },
+      { amount: 500, currency: 'PLN', date: records[1].date },
+    ],
+    'base-currency records pass through untouched; EUR is converted to base',
+  );
+  assert.equal(dropped, 1, 'the unrated row is dropped, not zeroed');
+});
+
+test('an all-base record set converts to itself with zero drops', () => {
+  const records = [convRecord('2026-01-05T00:00:00Z', 100, 'PLN')];
+  const { records: out, dropped } = convert.convertRecords(records, 'PLN', new Map());
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0].amount, 100);
+  assert.equal(dropped, 0);
+});
+
+test('the page wiring: conversion is fed the bridge, the ALL sentinel returns to the last currency', async () => {
+  // A source-level contract like the drill-down one: the hook call must be
+  // unconditional (React forbids hooks behind a ternary that changes with
+  // state), and the page must not clear the user's currency choice when the
+  // sentinel is on.
+  const source = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+
+  assert.match(source, /useConvertedRecords\(ctx, stableRecords\)/, 'hook is called with stabilized records');
+  assert.match(source, /CURRENCY_ALL/, 'the ALL sentinel exists');
+  assert.match(source, /currencyChoice === CURRENCY_ALL/, 'the sentinel is switched on by selection');
+});
+
 /* ---------------------------------------------------------------- privacy */
 
 const { mod: privacy, cleanup: cleanupPrivacy } = await loadTs('src/lib/privacy.ts');
@@ -1206,6 +1360,51 @@ test('the gate is open, but not ready, before the bridge answers', () => {
 });
 
 /* ------------------------------------------------- no silent ledger swap */
+
+test('a requested-but-unavailable conversion explains itself instead of reading zero', async () => {
+  // Regression, measured on a real host: `ALL (PLN)` was selectable, `viewCurrency`
+  // resolved to `null`, and `records.filter(r => r.currency === null)` matched
+  // nothing. The page rendered `PLN 0.00` and zero contributions with no message
+  // — indistinguishable from "you have no contributions". A plausible wrong total
+  // is worse than a missing feature, so the fallback must be a real currency and
+  // must be stated.
+  const source = (
+    await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8')
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+  assert.doesNotMatch(
+    source,
+    /viewCurrency = allRequested \? null/,
+    'viewCurrency must never be null: a null currency filters every record away',
+  );
+  assert.match(
+    source,
+    /const conversionBlocked = allRequested && !conversionAvailable/,
+    'the page must know when the conversion it was asked for is unavailable',
+  );
+  assert.match(
+    source,
+    /conversionBlocked && convertStatus !== 'loading'/,
+    'the unavailable conversion must be explained on screen',
+  );
+
+  // The hook must name the reason rather than swallowing it into a comment: an
+  // unnamed failure is what produced a silent zero in the first place.
+  const hook = (
+    await readFile(path.join(ROOT, 'src/hooks/useConvertedRecords.ts'), 'utf8')
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const status of [
+    'no-settings-bridge',
+    'settings-rejected',
+    'no-base-currency',
+    'no-rate-bridge',
+    'rates-rejected',
+  ]) {
+    assert.ok(hook.includes(status), `${status} must be a nameable outcome`);
+  }
+});
 
 test('the page has no alternate ledger to fall back to', async () => {
   // The silent swap lived in the *component*, so no test over the pure modules

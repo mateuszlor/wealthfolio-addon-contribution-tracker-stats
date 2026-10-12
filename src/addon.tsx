@@ -34,6 +34,44 @@ const enable: AddonEnableFunction = (ctx: AddonContext) => {
   // sandbox i18n instance can resolve keys.
   registerTranslations(translations);
 
+  // Runtime errors never reach the host log with a message when the thrown
+  // value is not an Error (React 19 rethrows random objects), so the host's own
+  // "runtime error: Uncaught " line stays empty and a blank page is
+  // undiagnosable from the outside. Capture both channels here: console.error
+  // and window error events from the sandbox document.
+  const logRuntimeError = (origin: string) => (message: unknown) => {
+    const detail =
+      message instanceof Error
+        ? `${message.name}: ${message.message}\n${message.stack ?? ''}`
+        : typeof message === 'string' || typeof message === 'number' || typeof message === 'boolean'
+          ? String(message)
+          : safeStringify(message);
+    ctx.api.logger?.error?.(`[runtime/${origin}] ${detail.slice(0, 1200)}`);
+  };
+
+  function safeStringify(value: unknown): string {
+    try {
+      return JSON.stringify(value, Object.getOwnPropertyNames(value as object));
+    } catch {
+      return String(value);
+    }
+  }
+
+  // React 19 routes thrown render errors through console.error first; the
+  // sandbox's own console is separate, so hook it at the source.
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    logRuntimeError('console.error')(args.length === 1 ? args[0] : args);
+    originalConsoleError(...args);
+  };
+
+  window.addEventListener('error', (event) => {
+    logRuntimeError('window.error')(event.error ?? event.message);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    logRuntimeError('unhandledrejection')((event as PromiseRejectionEvent).reason);
+  });
+
   // The host owns a single React root per addon and re-passes `location` on
   // every navigation, so we forward it through and never call createRoot here.
   const Route: React.FC<HostRouteProps> = (props) => (

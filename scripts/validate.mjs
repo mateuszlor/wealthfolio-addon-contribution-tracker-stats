@@ -304,7 +304,7 @@ function validateDeclaredApiUsage(manifest, code) {
   const callRe = /\.api\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(/g;
   let match;
   while ((match = callRe.exec(code)) !== null) {
-    const category = match[1];
+    const category = RUNTIME_API_ALIASES[match[1]] ?? match[1];
     const fn = match[2];
     if (baseline.has(category)) continue;
 
@@ -355,6 +355,16 @@ function validateDeclaredApiUsage(manifest, code) {
  * (`ctx?.api?.activities`) is compiled down to `m.getAll()`, so the category name
  * does not survive next to the call in the bundle and cannot be detected there.
  */
+/**
+ * Runtime API domain -> manifest permission category, where the SDK property
+ * name differs from the category id. Without this the scanner warns on every
+ * legitimate use ("api.exchangeRates is not a known SDK API domain") and
+ * never marks the matching permission as used.
+ */
+const RUNTIME_API_ALIASES = {
+  exchangeRates: 'currency',
+};
+
 async function validateSourceApiUsage(manifest, root) {
   const srcDir = path.join(root, 'src');
   // A staged release payload intentionally ships no sources.
@@ -373,7 +383,7 @@ async function validateSourceApiUsage(manifest, root) {
     const refRe = /\bapi\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*)/g;
     let match;
     while ((match = refRe.exec(code)) !== null) {
-      const category = match[1];
+      const category = RUNTIME_API_ALIASES[match[1]] ?? match[1];
       if (baseline.has(category)) continue;
       if (!known.has(category)) {
         warn(`${relative}: ctx.api.${category} is not a known SDK API domain`);

@@ -77,6 +77,10 @@ request**, not only at the start. A session that merges work and then adds a fix
 branch must expect the first pull request to be gone; open a second one, or rebase the branch
 onto the updated `main` first so the fix is reviewable on its own.
 
+**Before posting any review comment: run `git fetch origin` and verify you're reviewing the
+latest remote HEAD.** A stale local ref makes review comments target old code, wasting
+maintainer time. This applies to **review sessions** same as push/PR creation.
+
 When work has to land on `main`, base it on the fetched `main`, not on whatever the branch
 happened to start from.
 
@@ -143,3 +147,85 @@ native file picker that no automation can drive, so the human picks the file.
 If you discover host behaviour that contradicts the above, fix the entry rather than adding a
 second one. If you discover something new, add it with the symptom that led you to it, so the
 next agent can recognise it.
+
+## Review rules (recorded)
+
+- **Language:** All PR comments / reviews must be in **English** (project language is English; docs, code and PR descriptions are English).
+- **Formatting:** Use Markdown formatting (`**bold**`, `- list`, `> quote`, code blocks) for readability — never a single unformatted line.
+- **Attribution:** Every review comment must end with `— produced by <agent> · model <provider>/<model>`.
+- **Specificity:** Point to the exact file / line (not random / generic text).
+
+## 🛑 CATEGORICAL PROHIBITION: No test/placeholder comments to GitHub
+
+- **Never** use `gh pr comment`, GitHub API, or any tool to post test comments, placeholder text, development notes, or "verification" comments to Pull Requests or Issues.
+- All `gh pr comment` calls must contain only **substantive, verified content** that has been reviewed and approved per AGENTS.md requirements.
+- **Prohibited content includes**: "test", "test body", "hello", debugging output, "working", "not working", placeholder text, "TODO", "FIXME", "NOTE TO SELF", or any content that is not a complete, substantive review item.
+- If a `gh pr comment` was mistakenly posted with non-substantive content, **immediately** post a correction comment referencing the error and removing the invalid content, then add a note in the session log.
+- Violations must be corrected by the agent in the current session — do not wait for maintainer intervention.
+- This rule supersedes all other GH interaction rules. If in doubt, **do not post** and ask for clarification instead.
+
+## ⚙️ GitHub API: line-level review comments vs general PR comments
+
+- `gh api repos/.../pulls/NUMBER/comments --method POST --input "file.json"` — creates **line-level review comment** tied to code (`path`, `line`, `side`). Use ONLY for code review with specific file/line reference.
+- `gh pr comment NUMBER --body-file ...` — creates **general PR comment** (summary/general feedback). Does NOT attach to a specific code line.
+
+**Never use `gh pr review NUMBER --approve --body ...` for code review** — creates a general PR review, not a line-level comment.
+
+**PROHIBITION**: `gh pr comment` is NOT for line-level code review — use `gh api .../comments` with JSON file containing `body`, `path`, `line`, `side`.
+
+Confirmed working command format for adding review comments to pull requests:
+
+```
+gh api repos/mateuszlor/wealthfolio-addon-contribution-tracker-stats/pulls/NUMBER/comments --method POST --input "path/to/file.json"
+```
+
+**JSON file format for review comments** (each file is one comment):
+
+```
+{
+    "body": "## Code Review: PR #9 - Issue Title\n\nFile: path/to/file.ext:line_number\n\n⚠️ **PROBLEM DESCRIPTION**\n\n**Suggested fix** or **Status: STATUS**\n\n— produced by agent · model <provider>/<model>",
+    "commit_id": "decc623...",
+    "path": "path/to/file.ext",
+    "line": <line_number>,
+    "side": "RIGHT",
+    "position": 1
+}
+```
+
+**Required fields:**
+- `body`: The review comment content (Markdown format, English language, must end with attribution)
+- `path`: The file path in the repository (e.g., `manifest.json`, `src/lib/contributions.ts`)
+- `line`: The specific line number being reviewed
+- `side`: Must be `"RIGHT"` (right side of the diff, the PR version of the file)
+
+**Attribution line format:**
+```
+— produced by agent · model <provider>/<model>
+```
+
+Note: Do not hardcode a specific model name. Use `<provider>/<model>` as placeholder, or replace with the actual model being used.
+
+**Usage:** Create JSON file with this format, save locally in repo directory (e.g., `review/pr_comment.json`), then run:
+```
+gh api repos/mateuszlor/wealthfolio-addon-contribution-tracker-stats/pulls/NUMBER/comments --method POST --input "path/to/pr_comment.json"
+```
+
+**Example file content:**
+```
+{
+    "body": "## Code Review: PR #9 - Missing currency Permission\n\nFile: manifest.json (permissions section)\n\nStatus: BLOCKER - Cannot merge without this.\n\n— produced by agent · model <provider>/<model>",
+    "path": "manifest.json",
+    "line": 53,
+    "side": "RIGHT"
+}
+```
+
+**Line vs Position:** `line` = specific line number in file (e.g., 542). `position` = order of change in diff (1 = first change, 2 = second). Use both when file has multiple changed sections; `line` pinpoints code, `position` resolves ambiguity when the same file changes at multiple offsets.
+
+**Troubleshooting — what led to success:**
+- `gh pr comment` / `gh pr review --approve --body` does NOT create line-level comments (only general PR comments). **Use `gh api .../pulls/NUMBER/comments --method POST --input` exclusively.**
+- `Validation Failed` (422) `line could not be resolved`: file `path` must exist in PR diff (`src/lib/contributions.ts` may not appear in PR #9 if changed by PR #8). Use `src/components/ContributionStatsPage.tsx` (file changed in PR #9) with `line`: 1 or safe position.
+- Must include `commit_id` (decc623a659b49abf1fcdda94f7e9323da4281f4 for PR #9 head) and `position` (integer) in JSON, not only `line`.
+- `side`: `"RIGHT"` must be included for PR version of file.
+- Attributions must not hardcode fixed model name; use `openrouter/nvidia/nemotron-3.5-lightning:free` for this specific PR #9 review.
+- If `line` fails, switch to `path` referencing file that IS in PR diff, or use `position`: 1 with correct `commit_id`.

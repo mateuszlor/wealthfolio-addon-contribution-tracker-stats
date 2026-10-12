@@ -10,8 +10,6 @@ import {
   Tabs,
   TabsList,
   TabsTrigger,
-  ToggleGroup,
-  ToggleGroupItem,
   useAmountFormatting,
   useDateFormatting,
 } from '@wealthfolio/ui';
@@ -37,6 +35,7 @@ import {
   type Granularity,
 } from '../lib/contributions';
 import { scopeRecords } from '../hooks/useAccountScope';
+import { useConvertedRecords } from '../hooks/useConvertedRecords';
 import { maskAmount } from '../lib/privacy';
 
 export interface ContributionStatsPageProps {
@@ -124,6 +123,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
    * currency the selector stays hidden; otherwise it narrows the whole page —
    * stats, chart and drill-down — to the chosen one, defaulting to the largest
    * contributor so the page still opens on the dominant currency.
+   *
+   * A third option — "ALL (PLN)" — converts **every** record to the host's
+   * base currency through its own exchange-rate engine
+   * (`exchangeRates.getRatesForDates`, historical per-activity rates), the
+   * same rules the host's `invested` figure uses. A single-currency page is
+   * unchanged: with one currency the selector is hidden either way.
    */
   const currencies = React.useMemo(
     () => Array.from(new Set(records.map((record) => record.currency))).sort(),
@@ -143,16 +148,71 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     return best?.[0] ?? 'PLN';
   }, [records, flow]);
 
+  /** Sentinel for the converted view; a real currency code can never be this. */
+  const CURRENCY_ALL = '{{all}}';
+
   const [currencyChoice, setCurrencyChoice] = React.useState<string | null>(null);
-  const currency = currencyChoice ?? autoCurrency;
+  const allRequested = currencyChoice === CURRENCY_ALL;
+
+  /**
+   * Conversion only runs while the ALL view is on. The hook returns `undefined`
+   * records while the rates are in flight, so the page keeps its previous
+   * rendering state rather than flashing an empty chart on every choice click.
+   *
+   * `dropped` — rows the bridge could not price — is surfaced next to the
+   * interval bar, the same way `intake` explains an unexpectedly small total.
+   * `status` is the reason the view is unavailable when it is, which is what
+   * `conversionBlocked` below turns into an explanation.
+   */
+  const stableRecords = React.useMemo(() => records, [records]);
+
+  const {
+    records: allRecords,
+    dropped: convertDropped,
+    baseCurrency,
+    status: convertStatus,
+  } = useConvertedRecords(ctx, stableRecords);
+
+  const conversionAvailable = baseCurrency !== undefined && allRecords !== undefined;
+  const conversionVisible = allRequested && conversionAvailable;
+
+  /**
+   * A requested-but-unavailable conversion must never render as an empty ledger.
+   *
+   * This shipped broken on a real host: `ALL (PLN)` was selectable, `viewCurrency`
+   * became `null`, and `records.filter(r => r.currency === null)` matched nothing —
+   * so the page reported `PLN 0.00` and zero contributions, which reads as "you
+   * have no contributions" rather than "this view is broken". A wrong total that
+   * looks plausible is worse than a missing feature, so when the conversion
+   * cannot be shown the page falls back to a real currency and says why.
+   */
+  const conversionBlocked = allRequested && !conversionAvailable;
+  const viewCurrency = conversionVisible
+    ? (baseCurrency ?? autoCurrency)
+    : currencyChoice === CURRENCY_ALL
+      ? autoCurrency
+      : currencyChoice ?? autoCurrency;
+
+  // What the rest of the page sees: either the per-currency slice (the old
+  // path, unchanged) or the host-converted whole in the base currency.
+  const scopedRecords = conversionVisible ? allRecords : null;
 
   const currencyRecords = React.useMemo(
-    () => scopeRecords(
-      records.filter((record) => record.currency === currency),
-      includedIds,
-    ),
-    [records, currency, includedIds],
+    () =>
+      scopeRecords(
+        conversionVisible
+          ? scopedRecords ?? []
+          : records.filter((record) => record.currency === viewCurrency),
+        includedIds,
+      ),
+    [records, viewCurrency, includedIds, conversionVisible, scopedRecords],
   );
+
+  // The ALL view reports its currency through the host setting, so the hero, axis
+  // and drill-down all format through this one binding and the whole page flips
+  // in one place. When the conversion is blocked the page has fallen back to a
+  // real currency, so it formats as that instead of claiming the base.
+  const currency = conversionVisible ? (baseCurrency ?? 'PLN') : viewCurrency;
 
   // The earliest month with a deposit in this currency, bounding the month
   // switcher's back chevron.
@@ -474,6 +534,24 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         )}
 
         {loading && !error && <p className="text-muted-foreground text-sm">{t('loading')}</p>}
+
+        {conversionBlocked && convertStatus !== 'loading' && (
+          <p role="status" className="text-muted-foreground text-xs">
+            {t('conversionUnavailable', { shown: viewCurrency, reason: convertStatus })}
+          </p>
+        )}
+
+        {conversionVisible && (
+          convertDropped > 0 ? (
+            <p role="status" className="text-muted-foreground text-xs">
+              {t('conversionDropped', { count: convertDropped })}
+            </p>
+          ) : (
+            <p role="status" className="text-muted-foreground text-xs">
+              {t('conversionComplete')}
+            </p>
+          )
+        )}
       </section>
 
       {!loading && !error && (
@@ -514,6 +592,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               </TabsList>
             </Tabs>
 
+            {/* Every switch on this row is the same control the granularity uses:
+            `Tabs` / `TabsList` / `TabsTrigger`. They were `ToggleGroup`s, which
+            render as separate rounded-outline pills — so the row read as four
+            unrelated clusters instead of one set of grouped choices. Radix Tabs
+            is also the honest primitive here: a single-selection switch that
+            cannot be deselected, which is exactly what these are. `TabsTrigger`
+            needs no `size`/`variant` — the list owns the shape. */}
             <div className="flex flex-wrap items-center gap-3">
               {/* The three ledgers: deposits, withdrawals and their signed net. A ledger of
               deposits alone has no second side to switch to, so the switch waits
@@ -524,60 +609,49 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               user's own selection, so it survives in both directions. Nothing
               here changes the selection: an empty ledger stays empty. */}
               {(hasWithdrawals || flow !== 'deposits') && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
-                  value={flow}
-                  onValueChange={(value) => {
-                    if (value) setFlow(value as Flow);
-                  }}
-                >
-                  {FLOWS.map((value) => (
-                    <ToggleGroupItem
-                      key={value}
-                      value={value}
-                      variant="outline"
-                      aria-label={t(FLOW_LABEL_KEY[value])}
-                    >
-                      {t(FLOW_LABEL_KEY[value])}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                <Tabs value={flow} onValueChange={(value) => setFlow(value as Flow)}>
+                  <TabsList>
+                    {FLOWS.map((value) => (
+                      <TabsTrigger key={value} value={value} aria-label={t(FLOW_LABEL_KEY[value])}>
+                        {t(FLOW_LABEL_KEY[value])}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
               )}
 
               {currencies.length > 1 && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
-                  value={currency}
-                  onValueChange={(value) => {
-                    if (value) setCurrencyChoice(value);
-                  }}
+                <Tabs
+                  value={allRequested ? CURRENCY_ALL : currency}
+                  onValueChange={(value) => setCurrencyChoice(value)}
                 >
-                  {currencies.map((code) => (
-                    <ToggleGroupItem key={code} value={code} variant="outline" aria-label={code}>
-                      {code}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                  <TabsList>
+                    {currencies.map((code) => (
+                      <TabsTrigger key={code} value={code} aria-label={code}>
+                        {code}
+                      </TabsTrigger>
+                    ))}
+                    <TabsTrigger
+                      value={CURRENCY_ALL}
+                      aria-label={t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                    >
+                      {t('viewAllCurrency', { code: baseCurrency ?? 'PLN' })}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               )}
 
               {canSplit && (
-                <ToggleGroup
-                  type="single"
-                  size="sm"
-                  value={splitMode}
-                  onValueChange={(value) => {
-                    if (value) setSeriesMode(value as SeriesMode);
-                  }}
-                >
-                  <ToggleGroupItem value="total" variant="outline" aria-label={t('viewTotal')}>
-                    {t('viewTotal')}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="account" variant="outline" aria-label={t('viewPerAccount')}>
-                    {t('viewPerAccount')}
-                  </ToggleGroupItem>
-                </ToggleGroup>
+                <Tabs value={splitMode} onValueChange={(value) => setSeriesMode(value as SeriesMode)}>
+                  <TabsList>
+                    <TabsTrigger value="total" aria-label={t('viewTotal')}>
+                      {t('viewTotal')}
+                    </TabsTrigger>
+                    <TabsTrigger value="account" aria-label={t('viewPerAccount')}>
+                      {t('viewPerAccount')}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               )}
             </div>
           </div>

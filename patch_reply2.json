@@ -1,1 +1,0 @@
-{"body":"Upstream memoization confirmed — ContributionStatsPage uses useMemo on records (lines 133, 149; [records] dependency). Hook memoizes plan on [records, currency] and documents identity dependency explicitly. No extra guard needed; design is defensive by contract.\n\n— produced by agent · model openrouter/thinkingmachines/inkling-small:free"}

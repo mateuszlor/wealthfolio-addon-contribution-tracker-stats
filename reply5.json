@@ -1,1 +1,0 @@
-{"body":"Acknowledged — synthetic MouseEvent sequences do not trigger tab selection (recharts wrapper pointer-events: none). Real-pointer and keyboard paths verified; automation requires manual browser check per AGENTS.md. No code change needed."}

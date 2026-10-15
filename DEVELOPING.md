@@ -111,6 +111,7 @@ src/
 └── lib/
     ├── intake.ts                      raw activities -> contribution records (pure)
     ├── contributions.ts               bucketing, gap filling, summaries (pure)
+    ├── chartSeries.ts                  which series and stacks a view draws (pure)
     ├── convert.ts                     FX rate lookup and conversion (pure)
     ├── privacy.ts                     the host's amount mask, for tooltip strings (pure)
     └── window.ts                      interval window logic (pure)
@@ -188,6 +189,22 @@ a `stackId` and stack. Colours come from `seriesColor(index)`, a literal palette
 from a CSS token, for the reason described above. Only the topmost segment gets
 `radius`, otherwise every stacked segment shows rounded corners mid-column.
 
+Which series a view draws, and which stack each belongs to, is decided in
+`src/lib/chartSeries.ts` rather than in the page. It was a `useMemo` inside
+`ContributionStatsPage` when the regression shipped, and a view that forgot its `stackId`
+drew one narrow bar per account inside the band instead of one stacked column — with no
+test able to see it from inside a component. Measured in recharts 3.10.1, not assumed:
+
+- `isStacked` is `'stackId' in item && item.stackId != null`, so `stackId: undefined` is
+  **not** the neutral case — it is *not stacked*.
+- a bar with no stack id gets its own `sizeList` entry, hence its own `offset` inside the
+  band: `(size + barGap) * i`. That is the side-by-side layout.
+
+The consequence is a rule worth keeping: **stacking is stated per series, never inferred
+from the number of series or from the `split` flag.** The `+/-` totals view is the one that
+deliberately names no stack, because its two bars must stay side by side from the axis;
+everything that means to draw one column names one.
+
 ### The +/- (split-flow) view
 
 `net` answers *how much* the ledger moved by signing both directions into one total per
@@ -207,9 +224,11 @@ Two things about the rendering are deliberate:
 - **The page negates withdrawals when it builds the rows**, not the chart. recharts draws a
   negative value below the axis, and that is the whole mechanism. The alternative — teaching
   the chart a second stacking direction — is what the earlier stacked-withdrawals bug was.
-- **`split` disables the `stackId`.** `ContributionChart` computes
-  `stacked = series.length > 1 && !split`, so the two bars in a `+/-` column stay side by
-  side from the same axis instead of stacking onto each other.
+- **`split` no longer disables the `stackId`.** It never did on purpose in the current
+  code: `ContributionChart` reads the id off each series, and `splitTotalView` is what
+  leaves it out. The old inference — `stacked = series.length > 1 && !split` — could not
+  express two stacks, which is why it was replaced; see *Which series and stacks a view
+  draws* above for the measured reason omission is not neutral.
 
 The drill-down resolves which direction a click belongs to from the `dataKey` (`deposits`
 or `withdrawals`) and carries it as `direction`, so `selectDrillDownRecords` narrows the
@@ -234,6 +253,11 @@ would collapse the downward column onto the upward one and every month would rea
 to one shared id the moment the +/- view grew a per-account mode. It now reads the id off
 each series, and rounds the last segment of *each* stack rather than of the whole series
 list.
+
+That was half the fix, and the half that remained was the regression: with the inference
+gone, nothing else named a stack, so the plain per-account view (deposits, withdrawals,
+net) kept drawing one bar per account inside the band instead of one stacked column.
+`chartSeries.perAccountView` is what names the single stack those views share.
 
 Three label fields exist because one proved unable to do the job. `label` is the tooltip
 row and must be short — it shares its line with an amount and truncates. `legendLabel`

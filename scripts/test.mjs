@@ -1613,42 +1613,178 @@ test('the gate is open, but not ready, before the bridge answers', () => {
   assert.equal(state.degraded, false, 'loading is not a degraded bridge');
 });
 
-test('the per-account +/- view stacks the two directions separately', async () => {
+/* ---------------------------------------------------------- chart series */
+
+/*
+ * Stacking is decided in `src/lib/chartSeries.ts`, because it was decided in a
+ * `useMemo` inside the page when the regression shipped and no test could see
+ * it. These are the assertions that could not be made then.
+ */
+
+const { mod: chartSeries, cleanup: cleanupChartSeries } = await loadTs('src/lib/chartSeries.ts');
+
+test('every account of a per-account view shares one stack, so a period is one column', () => {
+  const split = contributions.bucketizeByAccount(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+      record('2026-01-06T00:00:00Z', 60, 'b', 'Bank'),
+    ],
+    'month',
+    'en',
+  );
+
+  const { rows, series } = chartSeries.perAccountView(split);
+
+  assert.equal(series.length, 2, 'one series per account');
+  assert.deepEqual(
+    series.map((s) => s.dataKey),
+    ['s0', 's1'],
+    'the series keys are positional, not the account ids',
+  );
+
+  // The regression, asserted outright: these series carried no `stackId` at
+  // all, so recharts drew each account as its own narrow bar inside the band
+  // (grouped) instead of stacking them into one column.
+  assert.ok(
+    series.every((s) => typeof s.stackId === 'string' && s.stackId.length > 0),
+    'a per-account series with no stack id is a standalone bar, not a stack segment',
+  );
+  assert.equal(
+    new Set(series.map((s) => s.stackId)).size,
+    1,
+    'one stack means one column: every account must name the same one',
+  );
+
+  // The column is built from the right numbers, and every account is
+  // zero-filled so the segment order never changes between periods.
+  assert.equal(rows[0].s0, 100);
+  assert.equal(rows[0].s1, 60);
+  assert.equal(rows[0].label, split.buckets[0].label);
+  assert.equal(rows[0].periodKey, '2026-01');
+});
+
+test('the +/- totals view keeps its two bars side by side: neither names a stack', () => {
+  // Pinned in the *other* direction on purpose. "Give every series a stack id"
+  // would fix the per-account view and break this one: the deposit bar and the
+  // withdrawal bar of a period must both grow from the axis in opposite
+  // directions, not one on top of the other.
+  const { rows, series } = chartSeries.splitTotalView(
+    contributions.bucketizeSplit(
+      [
+        record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+        record('2026-01-20T00:00:00Z', 30, 'a', 'Broker', 'withdrawals'),
+      ],
+      'month',
+      'en',
+    ),
+    { deposits: 'Deposits', withdrawals: 'Withdrawals' },
+  );
+
+  assert.deepEqual(series.map((s) => s.dataKey), ['deposits', 'withdrawals']);
+  assert.ok(
+    series.every((s) => s.stackId === undefined),
+    'a stack id here would collapse the withdrawal bar onto the deposit one',
+  );
+
+  // Both signs are decided in the row, never in the chart.
+  assert.equal(rows[0].deposits, 100);
+  assert.equal(rows[0].withdrawals, -30);
+});
+
+test('the total view draws exactly one series, and needs no stack', () => {
+  const buckets = contributions.fillGaps(
+    contributions.bucketize([record('2026-01-05T00:00:00Z', 100)], 'month', 'en'),
+    'month',
+    'en',
+  );
+
+  const { series } = chartSeries.totalView(buckets, 'Total');
+
+  assert.equal(series.length, 1);
+  assert.equal(series[0].dataKey, 'total');
+  assert.equal(series[0].label, 'Total');
+  assert.equal(series[0].stackId, undefined, 'a lone bar is not a stack, and does not need an id');
+});
+
+test('the per-account +/- view stacks the two directions separately', () => {
   // Regression guard for the shape that matters: deposits and withdrawals must
   // be two stacks, not one. Sharing an id would collapse the downward column
   // onto the upward one and every month would read as "nothing was withdrawn".
-  const raw = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
-  const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const { rows, series } = chartSeries.splitPerAccountView(
+    contributions.bucketizeByDirection(
+      [
+        record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+        record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+      ],
+      'month',
+      'en',
+    ),
+    { deposits: 'Deposits', withdrawals: 'Withdrawals' },
+  );
 
-  assert.match(source, /bucketizeByDirection\(flowRecords/, 'the per-account +/- split is wired');
-  assert.match(source, /stackId: 'deposits'/, "deposits series must name their own stack");
-  assert.match(source, /stackId: 'withdrawals'/, "withdrawals series must name a *different* stack");
+  const stacks = [...new Set(series.map((s) => s.stackId))];
+  assert.equal(stacks.length, 2, 'there must be exactly two distinct stacks');
+  assert.ok(
+    stacks.every((id) => typeof id === 'string' && id.length > 0),
+    'each direction series must name its own stack',
+  );
+  assert.notEqual(
+    series[0].stackId,
+    series[2].stackId,
+    'deposits and withdrawals must not share one stack, or the withdrawal column lands on the deposit one',
+  );
+
+  // Half the series grow up, half grow down; both halves name their own stack.
+  assert.deepEqual(
+    series.map((s) => s.dataKey),
+    ['d0', 'd1', 'w0', 'w1'],
+    'deposits first, then withdrawals, one series per account each',
+  );
 
   // The tooltip row is the account alone, so it fits on the line; the legend
   // spells the direction out because it has the room and it is the chart's key.
-  // Sharing one label gave a legend reading "IKE Millenium" twice.
-  assert.match(source, /label: account\.name,/, 'the tooltip row is the account, not account · direction');
-  assert.match(source, /legendLabel: `\$\{account\.name\} · \$\{t\('viewDeposits'\)\}`/);
-  assert.match(source, /legendLabel: `\$\{account\.name\} · \$\{t\('viewWithdrawals'\)\}`/);
-  assert.match(source, /group: t\('viewDeposits'\)/, 'the direction is also a tooltip group header');
-  assert.match(source, /group: t\('viewWithdrawals'\)/);
+  // Sharing one label gave a legend reading the same account name twice.
+  assert.ok(series.every((s) => s.label === 'Broker' || s.label === 'Bank'));
+  assert.equal(series[0].legendLabel, 'Broker · Deposits');
+  assert.equal(series[2].legendLabel, 'Broker · Withdrawals');
+  assert.equal(series[0].group, 'Deposits', 'the direction is also a tooltip group header');
+  assert.equal(series[2].group, 'Withdrawals');
 
-  // The legend half of that split lives in the chart, which owns the payload it
-  // hands `ChartLegendContent`.
+  // Withdrawals are negated where the row is built, not in the chart: that is
+  // what puts them below the axis.
+  assert.equal(rows[0].d0, 100);
+  assert.equal(rows[0].w1, -40);
+  assert.equal(rows[0].d1, 0, 'the account with no deposits is zero-filled');
+});
+
+test('the page wires every view through the module, so it builds no series of its own', async () => {
+  // The component keeps no copy of the construction: a second one is how the
+  // per-account view drifted away from it in the first place. What is pinned
+  // here is that the page delegates, and that the aggregation it feeds is the
+  // flow-filtered one.
+  const source = (
+    await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8')
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+  assert.match(source, /bucketizeByDirection\(flowRecords/, 'the per-account +/- split is wired');
+  assert.match(source, /chartSeries\.splitPerAccountView\(/, 'the +/- per-account view is built by the module');
+  assert.match(source, /chartSeries\.splitTotalView\(/, 'the +/- totals view is built by the module');
+  assert.match(source, /chartSeries\.perAccountView\(/, 'the per-account view is built by the module');
+  assert.match(source, /chartSeries\.totalView\(/, 'the total view is built by the module');
+
+  // Nothing here may name a stack id by hand: the module owns that decision.
+  assert.doesNotMatch(source, /stackId:/, 'the page must not hand-write a stack id');
+  // Nor may the chart infer one from the split flag.
   const chart = (
     await readFile(path.join(ROOT, 'src/components/ContributionChart.tsx'), 'utf8')
   ).replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(chart, /legendLabel \?\? item\.label/, 'the legend prefers the legend label when there is one');
   assert.match(chart, /stackId=\{stackOf\(item\)\}/, 'the stack id is explicit per series, not inferred');
   assert.doesNotMatch(chart, /stacked \?/, 'stacking must not be inferred from the split flag any more');
-
-  const stacks = [...source.matchAll(/stackId: '([a-z]+)'/g)].map((m) => m[1]);
-  assert.equal(new Set(stacks).size, 2, 'there must be exactly two distinct stacks');
-
-  // Withdrawals are negated where the row is built, not in the chart: that is
-  // what puts them below the axis.
-  assert.match(source, /row\[`w\$\{index\}`\] = -\(/, 'the page negates withdrawals, the chart does not');
 });
+
 
 /* ------------------------------------------------- no silent ledger swap */
 
@@ -1831,6 +1967,7 @@ for (const { name, fn } of tests) {
 await cleanupIntake();
 await cleanupContributions();
 await cleanupPrivacy();
+await cleanupChartSeries();
 
 console.log(`\n${tests.length - failed}/${tests.length} passed`);
 process.exit(failed === 0 ? 0 : 1);

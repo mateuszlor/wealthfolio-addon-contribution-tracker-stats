@@ -11,55 +11,7 @@ import {
   YAxis,
   type ChartConfig,
 } from '@wealthfolio/ui/chart';
-
-export interface ChartSeries {
-  /** Field name on each row. Kept short because it is also a CSS identifier. */
-  dataKey: string;
-  /**
-   * Row label, as shown in the tooltip next to the amount.
-   *
-   * Short by design: a tooltip row shares one line with its amount, so this
-   * truncates when it is long. Not the legend label — see `legendLabel`.
-   */
-  label: string;
-  /**
-   * Stack this series belongs to. Omit for a standalone bar.
-   *
-   * The default `'contributions'` is what the per-account view uses. The +/-
-   * view sets it explicitly, and sets it to two different values: deposits and
-   * withdrawals are separate stacks growing from the same axis in opposite
-   * directions, and sharing one id would collapse them onto each other.
-   */
-  stackId?: string;
-  /**
-   * Tooltip grouping header. Series sharing a group are collected under one
-   * header row instead of each carrying the group's name.
-   *
-   * The per-account +/- view needs this: labelling each series
-   * "Obligacje · Deposits" made every row long enough that the last one
-   * truncated to "Obligacje · Withdraw…". The direction is a property of the
-   * stack, not of the account, so stating it once is both shorter and truer.
-   */
-  group?: string;
-  /**
-   * Legend entry, when it must differ from the tooltip row label.
-   *
-   * `ChartLegendContent` reads this and renders it at full width, where nothing
-   * competes for the line — so the direction that the tooltip states once as a
-   * group header belongs here, spelled out. Sharing one label between the two
-   * produced a legend reading "IKE Millenium" twice with no way to tell which
-   * is which, which is worse than a long tooltip row.
-   */
-  legendLabel?: string;
-}
-
-export interface ChartRow {
-  /** Human readable label for the axis (e.g., "Jan 2026"). */
-  label: string;
-  /** Machine-readable period key (e.g., "2026-01"). Used for drill-down filtering. */
-  periodKey: string;
-  [dataKey: string]: string | number;
-}
+import type { ChartRow, ChartSeries } from '../lib/chartSeries';
 
 /** Information about the bar segment that was selected. */
 export interface BarClickInfo {

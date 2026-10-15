@@ -24,9 +24,11 @@ import {
   barClickToDrillDown,
   bucketize,
   bucketizeByAccount,
+  bucketizeByDirection,
   bucketizeSplit,
   fillGaps,
   filterByRange,
+  directionOfSeriesKey,
   resolveAccountFromSeriesKey,
   selectDrillDownRecords,
   selectFlow,
@@ -343,6 +345,14 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [flowRecords, granularity, locale],
   );
 
+  // The same split, per account: each account carries its own deposits and
+  // withdrawals in a period, which is what the stacked per-account variant of
+  // the +/- view draws — one stack per direction, each starting at the axis.
+  const directionSplit = React.useMemo(
+    () => bucketizeByDirection(flowRecords, granularity, locale),
+    [flowRecords, granularity, locale],
+  );
+
   // The hero total: for the +/- view it is the net of deposits and withdrawals,
   // so the user sees the overall direction at a glance.
   const heroTotal = React.useMemo(() => {
@@ -364,6 +374,49 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const chartColorOffset = flow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
   const { rows, series } = React.useMemo(() => {
+    if (flow === 'split' && splitMode === 'account') {
+      // Two series per account — one per direction — and two stacks. Deposits
+      // grow up from the axis, withdrawals grow down from it, so the page
+      // negates the withdrawals when it builds the row.
+      //
+      // The label is the account alone, and the direction moves to `group`:
+      // labelled per row it was "Obligacje · Deposits", which truncated. The
+      // direction is a property of the stack, not of the account, so stating it
+      // once above its group is both shorter and truer.
+      const splitSeries: ChartSeries[] = [];
+      directionSplit.accounts.forEach((account, index) => {
+        splitSeries.push({
+          dataKey: `d${index}`,
+          label: account.name,
+          legendLabel: `${account.name} · ${t('viewDeposits')}`,
+          stackId: 'deposits',
+          group: t('viewDeposits'),
+          ...seriesColor(index),
+        });
+      });
+      directionSplit.accounts.forEach((account, index) => {
+        splitSeries.push({
+          dataKey: `w${index}`,
+          label: account.name,
+          legendLabel: `${account.name} · ${t('viewWithdrawals')}`,
+          stackId: 'withdrawals',
+          group: t('viewWithdrawals'),
+          ...seriesColor(index),
+        });
+      });
+
+      const data: ChartRow[] = directionSplit.buckets.map((bucket) => {
+        const row: ChartRow = { label: bucket.label, periodKey: bucket.key };
+        directionSplit.accounts.forEach((account, index) => {
+          row[`d${index}`] = bucket.deposits[account.id] ?? 0;
+          row[`w${index}`] = -(bucket.withdrawals[account.id] ?? 0);
+        });
+        return row;
+      });
+
+      return { rows: data, series: splitSeries };
+    }
+
     if (flow === 'split') {
       const splitSeries: ChartSeries[] = [
         { dataKey: 'deposits', label: t('viewDeposits'), ...seriesColor(0) },
@@ -410,7 +463,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         },
       ],
     };
-  }, [splitMode, split, buckets, t, flow, splitBuckets]);
+  }, [splitMode, split, buckets, t, flow, splitBuckets, directionSplit]);
 
   // There is deliberately no effect forcing `seriesMode` back to `total` when
   // `canSplit` goes false. That round trip was the bug: `canSplit` is scoped to
@@ -430,10 +483,15 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       // which would list every account under this segment's name.
       if (!selection) return;
 
-      // In the +/- view, clicking a bar drills into that direction only.
-      const direction = flow === 'split' && (info.dataKey === 'deposits' || info.dataKey === 'withdrawals')
-        ? info.dataKey
-        : undefined;
+      // In the +/- view, clicking a bar drills into that direction only. The
+      // total column names the direction outright; the per-account column
+      // encodes it in the series key (`d0`, `w1`, …).
+      const direction =
+        flow === 'split'
+          ? info.dataKey === 'deposits' || info.dataKey === 'withdrawals'
+            ? info.dataKey
+            : directionOfSeriesKey(info.dataKey)
+          : undefined;
 
       setDrillDown({
         periodKey: selection.periodKey,
@@ -690,12 +748,10 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 </Tabs>
               )}
 
-              {/* The +/- view is a total-ledger view: it draws the two
-                  directions of one month, so there is nothing to split by
-                  account behind it. The per-account control waits for the user
-                  to leave the +/- view, and `seriesMode` keeps their choice so
-                  returning to a single-flow ledger restores it. */}
-              {canSplit && flow !== 'split' && (
+              {/* Per account works under the +/- view too, where it stacks each
+                  direction separately: deposits above the axis, withdrawals below
+                  it, both split per account. */}
+              {canSplit && (
                 <Tabs value={splitMode} onValueChange={(value) => setSeriesMode(value as SeriesMode)}>
                   <TabsList>
                     <TabsTrigger value="total" aria-label={t('viewTotal')}>

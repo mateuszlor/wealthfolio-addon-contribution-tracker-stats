@@ -499,6 +499,134 @@ export function bucketizeByAccount(
   return { accounts, buckets };
 }
 
+/**
+ * One period of the per-account +/- view.
+ *
+ * Two independent maps rather than one: deposits and withdrawals are never
+ * netted inside an account, because each one is its own stacked series in a
+ * separate column. `net` is their difference across all accounts, for the hero.
+ */
+export interface DirectionSplitBucket {
+  key: string;
+  label: string;
+  /** Deposits per account id; every account is present, defaulting to 0. */
+  deposits: Record<string, number>;
+  /** Withdrawals per account id; unsigned, the caller negates for the chart. */
+  withdrawals: Record<string, number>;
+  /** Total deposits minus total withdrawals across every account. */
+  net: number;
+  /** Total transactions in the period, both directions. */
+  count: number;
+}
+
+export interface DirectionSplitResult {
+  /** Stable ordering: largest contributor first, then by name. */
+  accounts: AccountRef[];
+  buckets: DirectionSplitBucket[];
+}
+
+/**
+ * Groups records by period, account **and** direction.
+ *
+ * This is what the per-account +/- view stacks. `bucketizeByAccount` cannot be
+ * used for it even by calling it twice: it signs its values by flow, so a
+ * second call would overwrite the first rather than adding a second column,
+ * and it returns one value per account where this needs two.
+ *
+ * Every period on the axis carries a value for every account in both maps,
+ * zeros included, so each stack keeps a stable segment order.
+ */
+export function bucketizeByDirection(
+  records: ContributionRecord[],
+  granularity: Granularity,
+  locale = 'en',
+  maxBuckets = 400,
+): DirectionSplitResult {
+  if (records.length === 0) return { accounts: [], buckets: [] };
+
+  const accountMeta = new Map<string, { name: string; total: number }>();
+  const cells = new Map<string, { deposits: Map<string, number>; withdrawals: Map<string, number>; count: number }>();
+  const keys: string[] = [];
+  const seen = new Set<string>();
+
+  for (const record of records) {
+    const key = periodKey(record.date, granularity);
+    const isWithdrawal = record.flow === 'withdrawals';
+    const accountId =
+      typeof record.accountId === 'string' && record.accountId
+        ? record.accountId
+        : UNKNOWN_ACCOUNT;
+    const accountName =
+      typeof record.accountName === 'string' && record.accountName.trim()
+        ? record.accountName.trim()
+        : accountId;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      keys.push(key);
+    }
+
+    const meta = accountMeta.get(accountId);
+    if (meta) {
+      // Ranked by absolute volume: a dominant withdrawal account still leads.
+      meta.total += isWithdrawal ? -record.amount : record.amount;
+      // A later activity may carry the account name an earlier one lacked.
+      if (meta.name === accountId && accountName !== accountId) {
+        meta.name = accountName;
+      }
+    } else {
+      accountMeta.set(accountId, {
+        name: accountName,
+        total: isWithdrawal ? -record.amount : record.amount,
+      });
+    }
+
+    let row = cells.get(key);
+    if (!row) {
+      row = { deposits: new Map(), withdrawals: new Map(), count: 0 };
+      cells.set(key, row);
+    }
+    const side = isWithdrawal ? row.withdrawals : row.deposits;
+    side.set(accountId, (side.get(accountId) ?? 0) + record.amount);
+    row.count += 1;
+  }
+
+  keys.sort();
+
+  const accounts: AccountRef[] = Array.from(accountMeta.entries())
+    .map(([id, meta]) => ({ id, name: meta.name }))
+    .sort((a, b) => {
+      const delta = accountMeta.get(b.id)!.total - accountMeta.get(a.id)!.total;
+      return delta !== 0 ? delta : a.name.localeCompare(b.name);
+    });
+
+  const axis = buildPeriodAxis(keys[0], keys[keys.length - 1], granularity, locale, maxBuckets);
+
+  const buckets: DirectionSplitBucket[] = axis.map((period) => {
+    const row = cells.get(period.key);
+    const deposits: Record<string, number> = {};
+    const withdrawals: Record<string, number> = {};
+    let net = 0;
+    for (const account of accounts) {
+      const d = row?.deposits.get(account.id) ?? 0;
+      const w = row?.withdrawals.get(account.id) ?? 0;
+      deposits[account.id] = d;
+      withdrawals[account.id] = w;
+      net += d - w;
+    }
+    return {
+      key: period.key,
+      label: period.label,
+      deposits,
+      withdrawals,
+      net,
+      count: row?.count ?? 0,
+    };
+  });
+
+  return { accounts, buckets };
+}
+
 /** What a drill-down panel is showing. */
 export interface DrillDownSelection {
   /** Period key the panel belongs to, at the current granularity. */
@@ -507,12 +635,18 @@ export interface DrillDownSelection {
   accountId?: string;
 }
 
+/** Series key prefixes used by the stacked +/- view. `d` deposits, `w` withdrawals. */
+const DIRECTION_SERIES_PREFIX = /^[dw](\d+)$/;
+
 /**
  * Resolves the account behind a per-account series key.
  *
- * The stacked chart identifies accounts positionally (`s0`, `s1`, …) because the
- * key has to be short and CSS-safe, so the series key is not the account id and
- * the drill-down cannot filter on it directly.
+ * The stacked chart identifies accounts positionally because the key has to be
+ * short and CSS-safe, so the series key is not the account id and the drill-down
+ * cannot filter on it directly. Three shapes exist: `s0`, `s1`, … (per-account
+ * stack) and `d0`, `w0`, `d1`, `w1`, … (the +/- view, one pair per account,
+ * `d` deposits and `w` withdrawals). All of them resolve the same way — the
+ * index is the account, whichever letter qualified it.
  *
  * Returns `undefined` for an out-of-range key rather than `undefined` for the
  * id: a caller that treats "no account id" as "the whole period" would list
@@ -522,9 +656,24 @@ export function resolveAccountFromSeriesKey(
   accounts: AccountRef[],
   dataKey: string,
 ): AccountRef | undefined {
-  const match = /^s(\d+)$/.exec(dataKey);
+  const match = /^s(\d+)$/.exec(dataKey) ?? DIRECTION_SERIES_PREFIX.exec(dataKey);
   if (!match) return undefined;
-  return accounts[Number.parseInt(match[1], 10)];
+  const index = Number.parseInt(match[1], 10);
+  if (!Number.isInteger(index) || index < 0) return undefined;
+  return accounts[index];
+}
+
+/**
+ * Direction a per-account +/- series key belongs to.
+ *
+ * `deposits` and `withdrawals` are the two stacks; `undefined` for anything
+ * else, which is how the caller tells a +/- series from a plain per-account one
+ * without the chart having to know which view it is rendering.
+ */
+export function directionOfSeriesKey(dataKey: string): 'deposits' | 'withdrawals' | undefined {
+  if (dataKey.startsWith('d')) return 'deposits';
+  if (dataKey.startsWith('w')) return 'withdrawals';
+  return undefined;
 }
 
 /** What the chart reports when a bar (or a tooltip row) is activated. */

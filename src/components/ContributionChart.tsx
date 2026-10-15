@@ -15,7 +15,42 @@ import {
 export interface ChartSeries {
   /** Field name on each row. Kept short because it is also a CSS identifier. */
   dataKey: string;
+  /**
+   * Row label, as shown in the tooltip next to the amount.
+   *
+   * Short by design: a tooltip row shares one line with its amount, so this
+   * truncates when it is long. Not the legend label — see `legendLabel`.
+   */
   label: string;
+  /**
+   * Stack this series belongs to. Omit for a standalone bar.
+   *
+   * The default `'contributions'` is what the per-account view uses. The +/-
+   * view sets it explicitly, and sets it to two different values: deposits and
+   * withdrawals are separate stacks growing from the same axis in opposite
+   * directions, and sharing one id would collapse them onto each other.
+   */
+  stackId?: string;
+  /**
+   * Tooltip grouping header. Series sharing a group are collected under one
+   * header row instead of each carrying the group's name.
+   *
+   * The per-account +/- view needs this: labelling each series
+   * "Obligacje · Deposits" made every row long enough that the last one
+   * truncated to "Obligacje · Withdraw…". The direction is a property of the
+   * stack, not of the account, so stating it once is both shorter and truer.
+   */
+  group?: string;
+  /**
+   * Legend entry, when it must differ from the tooltip row label.
+   *
+   * `ChartLegendContent` reads this and renders it at full width, where nothing
+   * competes for the line — so the direction that the tooltip states once as a
+   * group header belongs here, spelled out. Sharing one label between the two
+   * produced a legend reading "IKE Millenium" twice with no way to tell which
+   * is which, which is worse than a long tooltip row.
+   */
+  legendLabel?: string;
 }
 
 export interface ChartRow {
@@ -181,6 +216,29 @@ function InteractiveTooltip({
     .map((item) => ({ item, value: Number(row[item.dataKey] ?? 0) }))
     .filter((entry) => entry.value !== 0);
 
+  /**
+   * Rows, grouped where the series ask for it.
+   *
+   * A group means the row's own label no longer carries the group's name, so it
+   * is stated once above the group instead — see `ChartSeries.group`. Ungrouped
+   * series keep their flat order, which is what every other view uses.
+   */
+  const grouped = series.some((item) => item.group);
+  const groups = React.useMemo(() => {
+    if (!grouped) return undefined;
+    const out: Array<{ header?: string; entries: typeof entries }> = [];
+    for (const entry of entries) {
+      const header = entry.item.group;
+      const last = out[out.length - 1];
+      if (header && last && last.header === header) {
+        last.entries.push(entry);
+      } else {
+        out.push({ header, entries: [entry] });
+      }
+    }
+    return out;
+  }, [entries, grouped]);
+
   const total = entries.reduce((sum, entry) => sum + entry.value, 0);
 
   const select = (item: ChartSeries, value: number) =>
@@ -207,6 +265,29 @@ function InteractiveTooltip({
     <span className="tabular-nums font-medium">{formatValue(value)}</span>
   );
 
+  /** One series row, interactive when there is somewhere to send it. */
+  const renderRow = (item: ChartSeries, value: number) =>
+    onSelect ? (
+      <button
+        key={item.dataKey}
+        type="button"
+        onClick={() => select(item, value)}
+        aria-label={`${item.group ? `${item.group}: ` : ''}${item.label}: ${formatValue(value)}`}
+        className="hover:bg-muted/60 flex w-full cursor-pointer items-center justify-between gap-3 rounded px-1 text-left"
+      >
+        {identity(item)}
+        {amount(value)}
+      </button>
+    ) : (
+      <div
+        key={item.dataKey}
+        className="flex w-full items-center justify-between gap-3 px-1"
+      >
+        {identity(item)}
+        {amount(value)}
+      </div>
+    );
+
   return (
     <div
       ref={ref}
@@ -219,42 +300,43 @@ function InteractiveTooltip({
         transform: 'translate(-50%, calc(-100% - 12px))',
       }}
     >
-      <div className="border-border/50 bg-background grid max-w-64 min-w-36 items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
-        <div className="flex items-center justify-between gap-6 font-medium">
+      {/*
+        `max-w-80` rather than `max-w-64`: the per-account +/- view labels each
+        series with the account name, and 256px truncated long ones to
+        "Obligacje · Withdraw…". The clamp in the layout effect keeps the
+        tooltip inside the chart, so the extra width only costs room, never
+        overflow.
+      */}
+      <div className="border-border/50 bg-background grid max-w-80 min-w-40 items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
+        <div className="flex items-center justify-between gap-4 font-medium">
           <span className="truncate">{String(row.label)}</span>
           {/* With a single series the only row already shows the amount. */}
           {stacked && amount(total)}
         </div>
 
-        <div className="grid gap-0.5">
-          {entries.map(({ item, value }) =>
-            onSelect ? (
-              <button
-                key={item.dataKey}
-                type="button"
-                onClick={() => select(item, value)}
-                aria-label={`${item.label}: ${formatValue(value)}`}
-                className="hover:bg-muted/60 flex w-full cursor-pointer items-center justify-between gap-6 rounded px-1 text-left"
-              >
-                {identity(item)}
-                {amount(value)}
-              </button>
-            ) : (
-              <div
-                key={item.dataKey}
-                className="flex w-full items-center justify-between gap-6 px-1"
-              >
-                {identity(item)}
-                {amount(value)}
+        {grouped && groups ? (
+          <div className="grid gap-1">
+            {groups.map((group, index) => (
+              <div key={group.header ?? index} className="grid gap-0.5">
+                {group.header && (
+                  <span className="text-muted-foreground/70 px-1 text-[11px] font-medium">
+                    {group.header}
+                  </span>
+                )}
+                {group.entries.map(({ item, value }) => renderRow(item, value))}
               </div>
-            ),
-          )}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-0.5">
+            {entries.map(({ item, value }) => renderRow(item, value))}
+          </div>
+        )}
 
         {/* In the +/- view, show the net below the two directions. */}
         {split && entries.length > 0 && (
           <div className="border-t border-border/30 pt-1.5">
-            <div className="flex w-full items-center justify-between gap-6 px-1">
+            <div className="flex w-full items-center justify-between gap-3 px-1">
               <span className="text-muted-foreground">{t('netFlow')}</span>
               {amount(total)}
             </div>
@@ -290,7 +372,35 @@ export function ContributionChart({
 
   if (rows.length === 0 || series.length === 0) return null;
 
-  const stacked = series.length > 1 && !split;
+  /**
+   * Stack a series belongs to.
+   *
+   * The per-account view names its stack explicitly through `stackId`, and so
+   * does the +/- view — twice over, since deposits and withdrawals are two
+   * stacks rather than one. A series without one means a standalone bar, which
+   * is what the single-series views and the total +/- column are.
+   *
+   * It used to be inferred from `series.length > 1 && !split`, which cannot
+   * express "two stacks" and silently fell back to one shared id when the +/-
+   * view grew a per-account mode.
+   */
+  const stackOf = (item: ChartSeries): string | undefined => item.stackId;
+
+  /** Last series of each stack, so only the outermost segment is rounded. */
+  const topOfStack = React.useMemo(() => {
+    const last = new Map<string, number>();
+    series.forEach((item, index) => {
+      const id = stackOf(item);
+      if (id) last.set(id, index);
+    });
+    return last;
+  }, [series]);
+
+  const isTopOfStack = (index: number): boolean => {
+    const id = stackOf(series[index]);
+    if (!id) return true; // a standalone bar is never mid-column
+    return topOfStack.get(id) === index;
+  };
 
   // `ChartLegendContent` reads the swatch colour from the payload item and the
   // label from the chart config by `dataKey`, so both have to be present.
@@ -298,7 +408,7 @@ export function ContributionChart({
   // passing `nameKey="label"` looked up a key that does not exist.
   const legendPayload = series.map((item) => ({
     dataKey: item.dataKey,
-    value: item.label,
+    value: item.legendLabel ?? item.label,
     color: `var(--color-${item.dataKey})`,
   }));
 
@@ -420,11 +530,12 @@ export function ContributionChart({
               // container and recharts logs `width(-1) height(-1)`. Bars are
               // data, not decoration, so they appear without transition.
               isAnimationActive={false}
-              stackId={stacked ? 'contributions' : undefined}
+              stackId={stackOf(item)}
               fill={`var(--color-${item.dataKey})`}
-              // Only the topmost segment gets rounded corners, otherwise stacked
-              // segments show rounded edges in the middle of the column.
-              radius={index === series.length - 1 ? 4 : 0}
+              // Only the topmost segment of a stack gets rounded corners,
+              // otherwise stacked segments show rounded edges mid-column. A
+              // standalone bar has no stack and is always its own top.
+              radius={isTopOfStack(index) ? 4 : 0}
               cursor={onBarClick ? 'pointer' : 'default'}
               onMouseEnter={(entry: unknown) => {
                 const row = (entry as { payload?: ChartRow } | null)?.payload;

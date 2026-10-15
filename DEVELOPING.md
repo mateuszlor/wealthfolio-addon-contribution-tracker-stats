@@ -216,10 +216,34 @@ or `withdrawals`) and carries it as `direction`, so `selectDrillDownRecords` nar
 panel to that side. Without it, clicking the green bar would list withdrawals too and
 disagree with the bar. `direction` also names the panel's caption.
 
-The per-account switch is hidden under `+/-`: there is no per-account stack behind that
-view to switch to, and leaving it visible would let the user select a mode the code
-silently ignores. `seriesMode` keeps its value, so returning to a single-flow ledger
-restores the choice — the same reason the page never resets `seriesMode` from an effect.
+#### `+/-`, per account
+
+`bucketizeByDirection` returns, per period, **two maps** — `deposits` and `withdrawals`,
+each keyed by account id and each zero-filled everywhere the axis has a period. It is not a
+variant of `bucketizeByAccount` and cannot be replaced by two calls to it: that function
+signs its values by flow, so a second call would overwrite the first rather than add a
+second column, and it returns one value per account where this needs two. Both totals stay
+**unsigned** — the sign is which key the value is under — so the page negates withdrawals
+when it builds the chart rows and the chart never learns what a direction is.
+
+The chart draws two stacks, not one. `ChartSeries.stackId` names the stack a series belongs
+to and the page sets it to `'deposits'` and `'withdrawals'` separately; sharing one id
+would collapse the downward column onto the upward one and every month would read as
+"nothing was withdrawn". `ContributionChart` used to infer stacking from
+`series.length > 1 && !split`, which cannot express "two stacks" and silently fell back
+to one shared id the moment the +/- view grew a per-account mode. It now reads the id off
+each series, and rounds the last segment of *each* stack rather than of the whole series
+list.
+
+Three label fields exist because one proved unable to do the job. `label` is the tooltip
+row and must be short — it shares its line with an amount and truncates. `legendLabel`
+is the legend entry, which renders at full width with nothing competing for the line.
+`group` is a tooltip header, stated once above the rows that share it. The per-account
++/- view sets all three, and the sequence of defects that led there is worth keeping:
+`label` alone truncated to *"Obligacje · Withdraw…"*; widening the tooltip did not fix
+it; and shortening `label` then produced a legend reading *"IKE Millenium"* twice with no
+way to tell which entry was which, which is worse than a long tooltip row. `npm test`
+pins all three fields.
 
 ## Host API rules worth knowing
 
@@ -524,6 +548,8 @@ concentrated on the parts that fail silently:
   unknown-account collapse
 - the +/- view: `bucketizeSplit` keeping the two directions apart, the unsigned totals,
   the hero being their net, and the drill-down narrowing to the clicked direction
+- the +/- view per account: `bucketizeByDirection` zero-filling both maps, the two
+  directions never netted inside an account, and the three separate label fields
 - interval windows and gap filling, including the bucket ceiling
 - the privacy mask: fixed width, no digits, separators or unit suffix, identical for every
   locale and every magnitude

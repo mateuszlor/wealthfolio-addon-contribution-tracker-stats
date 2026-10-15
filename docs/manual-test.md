@@ -29,6 +29,29 @@ the failure this section exists to prevent. Do the part that is yours, then ask.
 trip once already: the agent handed over the path and stopped, and the maintainer had to come
 back and say the button had never been clicked.
 
+### Radix controls: a synthetic click does not select, focus() does
+
+Two kinds of pointer target live on this page and they behave oppositely, which is
+worth knowing before concluding anything is broken.
+
+`evaluate` on a `[role=tab]` and call `.click()`, or dispatch the full
+`pointerdown → mousedown → focus → pointerup → mouseup → click` sequence with
+`{ bubbles, cancelable, composed }` — **neither selects the tab.** The `data-state`
+stays `inactive` and every later measurement reads the previous view. This is not the
+bar-click rule restated: it is a different failure, it looks exactly like a broken
+feature, and it happens on an ordinary DOM element that click automation normally
+reaches.
+
+`tab.focus()` does select. Radix Tabs defaults to `activationMode="automatic"`, so
+focus *is* the selection gesture, and a focus event is not subject to whatever makes
+the synthesised mouse path a no-op. Diagnose the element before concluding anything:
+`disabled`, `aria-disabled`, computed `pointer-events`, `getBoundingClientRect()` and
+`document.contains()` all came back healthy on a tab that ignored every synthetic
+click. The element was never the problem.
+
+The same does not generalise to recharts bars — there, only a real pointer works, and
+that stays the maintainer's.
+
 ### The bar click is a human action, and that is the point
 
 The maintainer clicks the bar and reports what happened. Do not try to synthesise the click.

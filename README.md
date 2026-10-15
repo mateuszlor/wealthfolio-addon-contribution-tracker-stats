@@ -48,11 +48,18 @@ into a single bar per month, which tells you the answer but hides how much money
 moved in each direction; *+/-* shows both, so a quiet month with a small deposit
 and a large withdrawal no longer looks the same as a quiet month with neither.
 
-The summary still reports the **net** total, because that is the bottom line.
-The tooltip adds the net under the two directions once you hover a month, and
-clicking a bar drills into **that direction only** — the green bar lists
-deposits, the red one lists withdrawals. A month with no withdrawals draws its
-green bar and no red one, rather than disappearing from the axis.
+With more than one account, *+/-* can be split per account too: each month then
+draws **two stacks**, one above the axis and one below it, each broken into one
+segment per account. The summary still reports the **net** total. The tooltip adds
+the net under the two directions once you hover a month, and clicking a bar drills
+into **that direction only** — the green bar lists deposits, the red one lists
+withdrawals. A month with no withdrawals draws its green bar and no red one, rather
+than disappearing from the axis.
+
+Because a per-account tooltip row would otherwise read *"Obligacje · Deposits"*
+and truncate, the direction is stated **once** as a group header there while the
+legend spells it out in full — the legend is the only place with room for it, and
+it is what identifies the colours on the chart.
 
 Two definitions matter:
 

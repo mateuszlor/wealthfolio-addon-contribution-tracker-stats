@@ -224,6 +224,31 @@ await tools["browser"].evaluate({ tabID, frameID, script: `JSON.stringify({
 
 Non-zero bars and a `TOTAL CONTRIBUTED` line mean the route and the data path work.
 
+#### 6a. The stacked column
+
+The stacking regression rendered as **N thin bars per period, one per account**, instead of
+one column divided into N segments. On the host it is a one-look question, so ask for the
+look and use the read below as a second opinion, never as the verdict:
+
+```js
+await tools["browser"].evaluate({ tabID, frameID, script: `(() => {
+  const boxes = [...document.querySelectorAll('.recharts-bar-rectangle')]
+    .map(e => e.getBoundingClientRect())
+    .filter(b => b.width > 0);
+  const columns = new Set(boxes.map(b => Math.round(b.left)));
+  return JSON.stringify({ bars: boxes.length, columns: columns.size });
+})()` })
+```
+
+With more than one account, *Per account* must report **one column per period** with
+`bars` equal to the number of accounts that have a value in it. `bars > columns` by a
+factor of the account count is the regression, back again.
+
+**If the read says one column and the screen shows N thin bars, believe the screen** and say
+so — a stale frame, an old build or a scoped selector has cost this project a session
+before. The same goes the other way: a read showing many columns on a chart that plainly
+stacks is the instrument, not the page.
+
 ### 7. The maintainer clicks the bar
 
 Ask for it, then stop and wait. Do not synthesise the event.

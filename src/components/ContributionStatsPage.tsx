@@ -17,7 +17,7 @@ import { useAccountScope } from '../hooks/useAccountScope';
 import { useContributions } from '../hooks/useContributions';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { usePersistedWindow } from '../hooks/usePersistedWindow';
-import { ContributionChart, seriesColor, type BarClickInfo, type ChartRow, type ChartSeries } from './ContributionChart';
+import { ContributionChart, type BarClickInfo } from './ContributionChart';
 import { DrillDownPanel } from './DrillDownPanel';
 import { MonthSwitcher } from './MonthSwitcher';
 import {
@@ -37,6 +37,7 @@ import {
   type Flow,
   type Granularity,
 } from '../lib/contributions';
+import * as chartSeries from '../lib/chartSeries';
 import { scopeRecords } from '../hooks/useAccountScope';
 import { useConvertedRecords } from '../hooks/useConvertedRecords';
 import { maskAmount } from '../lib/privacy';
@@ -373,97 +374,45 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // contributory green, because its bars stay meaningful in both directions.
   const chartColorOffset = flow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
+  /** The name of the single series the total view draws. */
+  const totalLabel =
+    flow === 'withdrawals' ? t('viewWithdrawals')
+      : flow === 'net' ? t('netFlow')
+      : t('totalContributions');
+
+  const directionLabels = React.useMemo(
+    () => ({ deposits: t('viewDeposits'), withdrawals: t('viewWithdrawals') }),
+    [t],
+  );
+
+  /**
+   * Which series and stacks this view draws.
+   *
+   * Constructed in `src/lib/chartSeries.ts`, not here: a view that forgot its
+   * `stackId` produced four side-by-side bars per period instead of one stacked
+   * column, and no test could see it from inside a `useMemo` in this component.
+   * The module comment holds the recharts measurements behind that decision.
+   */
   const { rows, series } = React.useMemo(() => {
     if (flow === 'split' && splitMode === 'account') {
       // Two series per account — one per direction — and two stacks. Deposits
-      // grow up from the axis, withdrawals grow down from it, so the page
+      // grow up from the axis, withdrawals grow down from it, so the module
       // negates the withdrawals when it builds the row.
-      //
-      // The label is the account alone, and the direction moves to `group`:
-      // labelled per row it was "Obligacje · Deposits", which truncated. The
-      // direction is a property of the stack, not of the account, so stating it
-      // once above its group is both shorter and truer.
-      const splitSeries: ChartSeries[] = [];
-      directionSplit.accounts.forEach((account, index) => {
-        splitSeries.push({
-          dataKey: `d${index}`,
-          label: account.name,
-          legendLabel: `${account.name} · ${t('viewDeposits')}`,
-          stackId: 'deposits',
-          group: t('viewDeposits'),
-          ...seriesColor(index),
-        });
-      });
-      directionSplit.accounts.forEach((account, index) => {
-        splitSeries.push({
-          dataKey: `w${index}`,
-          label: account.name,
-          legendLabel: `${account.name} · ${t('viewWithdrawals')}`,
-          stackId: 'withdrawals',
-          group: t('viewWithdrawals'),
-          ...seriesColor(index),
-        });
-      });
-
-      const data: ChartRow[] = directionSplit.buckets.map((bucket) => {
-        const row: ChartRow = { label: bucket.label, periodKey: bucket.key };
-        directionSplit.accounts.forEach((account, index) => {
-          row[`d${index}`] = bucket.deposits[account.id] ?? 0;
-          row[`w${index}`] = -(bucket.withdrawals[account.id] ?? 0);
-        });
-        return row;
-      });
-
-      return { rows: data, series: splitSeries };
+      return chartSeries.splitPerAccountView(directionSplit, directionLabels);
     }
 
     if (flow === 'split') {
-      const splitSeries: ChartSeries[] = [
-        { dataKey: 'deposits', label: t('viewDeposits'), ...seriesColor(0) },
-        { dataKey: 'withdrawals', label: t('viewWithdrawals'), ...seriesColor(5) },
-      ];
-
-      const data: ChartRow[] = splitBuckets.map((bucket) => ({
-        label: bucket.label,
-        periodKey: bucket.key,
-        deposits: bucket.depositsTotal,
-        withdrawals: -bucket.withdrawalsTotal,
-      }));
-
-      return { rows: data, series: splitSeries };
+      // The +/- totals: two bars per period, side by side, deliberately without
+      // a stack id — the module documents why.
+      return chartSeries.splitTotalView(splitBuckets, directionLabels);
     }
 
     if (splitMode === 'account') {
-      const next: ChartSeries[] = split.accounts.map((account, index) => {
-        const dataKey = `s${index}`;
-        return { dataKey, label: account.name, ...seriesColor(index) };
-      });
-
-      const data: ChartRow[] = split.buckets.map((bucket) => {
-        const row: ChartRow = { label: bucket.label, periodKey: bucket.key };
-        split.accounts.forEach((account, index) => {
-          row[`s${index}`] = bucket.values[account.id] ?? 0;
-        });
-        return row;
-      });
-
-      return { rows: data, series: next };
+      return chartSeries.perAccountView(split);
     }
 
-    return {
-      rows: buckets.map((bucket) => ({ label: bucket.label, periodKey: bucket.key, total: bucket.total })),
-      series: [
-        {
-          dataKey: 'total',
-          label:
-            flow === 'withdrawals' ? t('viewWithdrawals')
-              : flow === 'net' ? t('netFlow')
-              : t('totalContributions'),
-          ...seriesColor(chartColorOffset),
-        },
-      ],
-    };
-  }, [splitMode, split, buckets, t, flow, splitBuckets, directionSplit]);
+    return chartSeries.totalView(buckets, totalLabel);
+  }, [splitMode, split, buckets, flow, splitBuckets, directionSplit, directionLabels, totalLabel]);
 
   // There is deliberately no effect forcing `seriesMode` back to `total` when
   // `canSplit` goes false. That round trip was the bug: `canSplit` is scoped to

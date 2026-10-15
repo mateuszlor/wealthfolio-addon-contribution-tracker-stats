@@ -100,14 +100,20 @@ src/
 ├── components/
 │   ├── ContributionStatsPage.tsx      layout, selectors, summary
 │   ├── ContributionChart.tsx          ChartContainer + BarChart
-│   └── CustomRangeButton.tsx          ghost button + Popover + DatePickerWithRange
+│   ├── DrillDownPanel.tsx             drill-down sheet for bar details
+│   └── MonthSwitcher.tsx              custom range button + popover + date picker
 ├── hooks/
 │   ├── useContributions.ts            host bridge: activities -> records
-│   └── useHiddenAmounts.ts            privacy flag in ctx.api.storage (sandbox-safe)
+│   ├── useHiddenAmounts.ts            privacy flag in ctx.api.storage (sandbox-safe)
+│   ├── useAccountScope.ts             account type filtering (investment/cash only)
+│   ├── useConvertedRecords.ts         FX conversion to base currency
+│   └── usePersistedWindow.ts          interval window persistence
 └── lib/
     ├── intake.ts                      raw activities -> contribution records (pure)
     ├── contributions.ts               bucketing, gap filling, summaries (pure)
-    └── privacy.ts                     the host's amount mask, for tooltip strings (pure)
+    ├── convert.ts                     FX rate lookup and conversion (pure)
+    ├── privacy.ts                     the host's amount mask, for tooltip strings (pure)
+    └── window.ts                      interval window logic (pure)
 
 scripts/
 ├── test.mjs                unit tests (esbuild transpiles the TS on the fly)

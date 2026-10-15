@@ -142,6 +142,31 @@ native file picker that no automation can drive, so the human picks the file.
   reach recharts the way a real pointer does. Pointer-driven behaviour is the maintainer's to
   exercise.
 
+## Documentation is part of the change
+
+Every code change that adds, removes, or renames a file under `src/` or `scripts/` must update
+the `## Layout` section of `DEVELOPING.md` in the same commit. A missing entry means an agent
+added code without updating the docs — a reviewer cannot see what exists from reading the tree.
+
+Every user-facing change — new toggle, new view, new permission, changed behaviour, removed
+feature — must update `README.md` in the same commit. A feature the user cannot discover from
+README is a feature the user does not have.
+
+Similarly, every new permission, new `ctx.api` category, or new host-API gotcha discovered during
+implementation must be added to the relevant section above (`Manifest shape`, `Host API rules`,
+`Permissions`) in the same commit.
+
+When the layout drifts, fix it rather than adding a second section. When a host rule turns out
+to be wrong, fix the existing entry rather than appending a contradictory one.
+
+## No real amounts in any written artifact
+
+No commit message, PR description, review comment, documentation file, or code comment may
+contain a real monetary value read from the host or from test data — not as an example, not in a
+screenshot description, not in a "for instance" aside. Use placeholders (`<amount>`, `1234.56
+PLN`, `10 000`, `••••`) instead. Real amounts leak the maintainer's financial history into a
+public repository and into Git history, where they persist even after the commit is amended.
+
 ## Adding to this file
 
 If you discover host behaviour that contradicts the above, fix the entry rather than adding a
@@ -229,3 +254,42 @@ gh api repos/mateuszlor/wealthfolio-addon-contribution-tracker-stats/pulls/NUMBE
 - `side`: `"RIGHT"` must be included for PR version of file.
 - Attributions must not hardcode fixed model name; use `openrouter/nvidia/nemotron-3.5-lightning:free` for this specific PR #9 review.
 - If `line` fails, switch to `path` referencing file that IS in PR diff, or use `position`: 1 with correct `commit_id`.
+
+## i18n
+
+New user-facing strings must go into **both** `en` and `pl` bundles in `src/i18n.ts`. Code,
+comments and identifiers stay English. Do not hand-roll `Intl` for formatting — numbers,
+currencies and dates come from the host (`FormattingProvider`, `AmountDisplay`,
+`useAmountFormatting()`, `useDateFormatting()`), so they follow the application's formatting
+region rather than the interface language. Never name an i18next interpolation variable
+`currency` — i18next's formatter consumes `options.currency` as a format spec and renders the
+literal `{{currency}}`.
+
+## Styling and CSS
+
+Ship plain CSS only. `addon.css` must not contain `@import`, `@theme`, `@apply`,
+`@custom-variant` or `@source` — the host rejects them. Chart colours go through
+`ChartConfig.theme` (literal values like `hsl(142 64% 34%)`), never `var(--chart-1)` —
+`ChartStyle` emits `--color-<key>` on the `ChartContainer` element, and a token-based colour
+leaves `fill` unresolved and the bars render black.
+
+## Tests
+
+Every new function or behaviour in `src/lib/` must have a corresponding assertion in
+`scripts/test.mjs` in the same commit. A test that would pass with the bug still present is
+not a test — assert the wrong behaviour explicitly so the regression is pinned in both
+directions. A selector living in a component cannot be covered by `scripts/test.mjs`; move it
+to `src/lib/` first.
+
+## Scope of changes
+
+A commit must do one thing. A bug fix does not include a refactor; a refactor does not include
+a fix; a feature does not include an unrelated formatting pass. Mixing them makes the review
+harder and the bisect useless.
+
+## Error handling and degraded mode
+
+When a bridge call (`ctx.api.*`) can fail, the UI must degrade gracefully — a labelled warning,
+not a blank page and not silent zeros. A missing or rejecting bridge must never cause the page
+to crash or render an empty state that hides the reason. Prefer `degraded` with an explanation
+over a fallback that pretends everything is fine.

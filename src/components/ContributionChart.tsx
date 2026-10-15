@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAddonTranslation } from '@wealthfolio/addon-sdk';
 import {
   Bar,
   BarChart,
@@ -61,6 +62,12 @@ export interface ContributionChartProps {
    * masked — the same choice the host's net-worth chart makes.
    */
   hideAxis?: boolean;
+  /**
+   * The +/- view: deposits and withdrawals as separate bars (up and down).
+   * When set, the tooltip shows both directions and their net, and clicking
+   * a bar drills into that direction.
+   */
+  split?: boolean;
   /** Called when a bar is clicked, or a tooltip row is activated. */
   onBarClick?: (info: BarClickInfo) => void;
 }
@@ -153,14 +160,17 @@ function InteractiveTooltip({
   series,
   formatValue,
   onSelect,
+  split = false,
   ref,
 }: {
   hover: HoverState;
   series: ChartSeries[];
   formatValue: (value: number) => string;
   onSelect?: (info: BarClickInfo) => void;
+  split?: boolean;
   ref?: React.Ref<HTMLDivElement>;
 }) {
+  const { t } = useAddonTranslation();
   const { row } = hover;
   const stacked = series.length > 1;
 
@@ -240,6 +250,16 @@ function InteractiveTooltip({
             ),
           )}
         </div>
+
+        {/* In the +/- view, show the net below the two directions. */}
+        {split && entries.length > 0 && (
+          <div className="border-t border-border/30 pt-1.5">
+            <div className="flex w-full items-center justify-between gap-6 px-1">
+              <span className="text-muted-foreground">{t('netFlow')}</span>
+              {amount(total)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -260,6 +280,7 @@ export function ContributionChart({
   formatTick,
   colorOffset = 0,
   hideAxis = false,
+  split = false,
   onBarClick,
 }: ContributionChartProps) {
   const [hover, setHover] = React.useState<HoverState | undefined>(undefined);
@@ -269,7 +290,7 @@ export function ContributionChart({
 
   if (rows.length === 0 || series.length === 0) return null;
 
-  const stacked = series.length > 1;
+  const stacked = series.length > 1 && !split;
 
   // `ChartLegendContent` reads the swatch colour from the payload item and the
   // label from the chart config by `dataKey`, so both have to be present.
@@ -466,6 +487,7 @@ export function ContributionChart({
             series={series}
             formatValue={formatValue}
             onSelect={onBarClick}
+            split={split}
             ref={tooltipRef}
           />
         )}

@@ -24,6 +24,7 @@ import {
   barClickToDrillDown,
   bucketize,
   bucketizeByAccount,
+  bucketizeSplit,
   fillGaps,
   filterByRange,
   resolveAccountFromSeriesKey,
@@ -46,13 +47,14 @@ const GRANULARITIES: Granularity[] = ['month', 'day', 'year'];
 
 type SeriesMode = 'total' | 'account';
 
-/** The three ledgers of the flow switch, in display order. */
-const FLOWS: Flow[] = ['deposits', 'withdrawals', 'net'];
+/** The four ledgers of the flow switch, in display order. */
+const FLOWS: Flow[] = ['deposits', 'withdrawals', 'net', 'split'];
 
 const FLOW_LABEL_KEY: Record<Flow, string> = {
   deposits: 'viewDeposits',
   withdrawals: 'viewWithdrawals',
   net: 'viewNet',
+  split: 'viewSplit',
 };
 
 /** Labels the hero, matching the spending reports' small caps. */
@@ -115,6 +117,8 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     periodLabel: string;
     accountId?: string;
     accountName?: string;
+    /** For the +/- view: which direction was clicked. */
+    direction?: 'deposits' | 'withdrawals';
   } | null>(null);
 
   /**
@@ -331,6 +335,23 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
     [records],
   );
 
+  // The +/- view: deposits and withdrawals as separate totals per bucket.
+  // Unlike the net view, these are never netted inside a bucket, because the
+  // whole point of the view is to show them as separate bars.
+  const splitBuckets = React.useMemo(
+    () => bucketizeSplit(flowRecords, granularity, locale),
+    [flowRecords, granularity, locale],
+  );
+
+  // The hero total: for the +/- view it is the net of deposits and withdrawals,
+  // so the user sees the overall direction at a glance.
+  const heroTotal = React.useMemo(() => {
+    if (flow === 'split') {
+      return splitBuckets.reduce((sum, b) => sum + b.net, 0);
+    }
+    return stats.total;
+  }, [flow, splitBuckets, stats.total]);
+
   // The user's selection is honoured even when the window holds nothing to split.
   // An empty per-account chart is the honest rendering of an empty period; the
   // alternative — quietly falling back to the total view — is the silent swap
@@ -343,6 +364,22 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   const chartColorOffset = flow === 'withdrawals' ? 5 : 0; // 5 = rose slot
 
   const { rows, series } = React.useMemo(() => {
+    if (flow === 'split') {
+      const splitSeries: ChartSeries[] = [
+        { dataKey: 'deposits', label: t('viewDeposits'), ...seriesColor(0) },
+        { dataKey: 'withdrawals', label: t('viewWithdrawals'), ...seriesColor(5) },
+      ];
+
+      const data: ChartRow[] = splitBuckets.map((bucket) => ({
+        label: bucket.label,
+        periodKey: bucket.key,
+        deposits: bucket.depositsTotal,
+        withdrawals: -bucket.withdrawalsTotal,
+      }));
+
+      return { rows: data, series: splitSeries };
+    }
+
     if (splitMode === 'account') {
       const next: ChartSeries[] = split.accounts.map((account, index) => {
         const dataKey = `s${index}`;
@@ -373,7 +410,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         },
       ],
     };
-  }, [splitMode, split, buckets, t, flow]);
+  }, [splitMode, split, buckets, t, flow, splitBuckets]);
 
   // There is deliberately no effect forcing `seriesMode` back to `total` when
   // `canSplit` goes false. That round trip was the bug: `canSplit` is scoped to
@@ -393,6 +430,11 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
       // which would list every account under this segment's name.
       if (!selection) return;
 
+      // In the +/- view, clicking a bar drills into that direction only.
+      const direction = flow === 'split' && (info.dataKey === 'deposits' || info.dataKey === 'withdrawals')
+        ? info.dataKey
+        : undefined;
+
       setDrillDown({
         periodKey: selection.periodKey,
         periodLabel: info.periodLabel,
@@ -401,9 +443,10 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
           selection.accountId && accounts.length > 0
             ? resolveAccountFromSeriesKey(accounts, info.dataKey)?.name
             : undefined,
+        direction,
       });
     },
-    [splitMode, split.accounts],
+    [splitMode, split.accounts, flow],
   );
 
   // Anything that changes what the chart means invalidates an open panel:
@@ -424,15 +467,20 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
   // the selector applies the same window the chart was built from. It takes the
   // window rather than an already-scoped list, so the two cannot drift apart and
   // a test can cover the scoping instead of trusting this call site.
+  //
+  // In the +/- view, a clicked bar carries its direction, so the panel lists
+  // only that direction's records. Without it the panel would mix both flows
+  // and disagree with the bar that was clicked.
   const drillDownRecords = React.useMemo(() => {
     if (!drillDown) return [];
-    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, flow);
+    const drillFlow = drillDown.direction ?? flow;
+    return selectDrillDownRecords(currencyRecords, range, drillDown, granularity, drillFlow);
   }, [drillDown, currencyRecords, range, granularity, flow]);
 
-  const drillDownTotal = React.useMemo(
-    () => drillDownRecords.reduce((sum, r) => sum + signedAmount(r, flow), 0),
-    [drillDownRecords, flow],
-  );
+  const drillDownTotal = React.useMemo(() => {
+    const drillFlow = drillDown?.direction ?? flow;
+    return drillDownRecords.reduce((sum, r) => sum + signedAmount(r, drillFlow), 0);
+  }, [drillDownRecords, drillDown?.direction, flow]);
 
   const rangeLabel =
     formatDate(range.from) && formatDate(range.to)
@@ -450,12 +498,13 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             <p className={HERO_LABEL_CLASS}>
               {flow === 'withdrawals' ? t('totalWithdrawn')
                 : flow === 'net' ? t('netFlow')
+                : flow === 'split' ? t('netFlow')
                 : t('totalContributions')}
             </p>
             {/* The host mask is shorter than a real total, so the slot keeps a
                 minimum width and toggling does not shift the block. */}
             <p className="tabular-nums min-w-[9ch] text-3xl font-bold">
-              <AmountDisplay value={stats.total} currency={currency} isHidden={amountsHidden} />
+              <AmountDisplay value={heroTotal} currency={currency} isHidden={amountsHidden} />
             </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>
             {/* What the numbers cover. The excluded-account note is the rule; the
@@ -494,7 +543,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
               </div>
               <div>
                 <dt className={HERO_LABEL_CLASS}>
-                  {flow === 'net' ? t('netMonthly') : t('averageMonthly')}
+                  {flow === 'net' || flow === 'split' ? t('netMonthly') : t('averageMonthly')}
                 </dt>
                 <dd className="tabular-nums font-semibold">
                   <AmountDisplay
@@ -600,14 +649,14 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             cannot be deselected, which is exactly what these are. `TabsTrigger`
             needs no `size`/`variant` — the list owns the shape. */}
             <div className="flex flex-wrap items-center gap-3">
-              {/* The three ledgers: deposits, withdrawals and their signed net. A ledger of
-              deposits alone has no second side to switch to, so the switch waits
-              for a withdrawal to exist — **but not once the user is holding one
-              of the other two**. `hasWithdrawals` is scoped to the window, and
-              narrowing the range empties it, which deleted the switch and left
-              the user in a ledger they could not leave. The guard is on the
-              user's own selection, so it survives in both directions. Nothing
-              here changes the selection: an empty ledger stays empty. */}
+              {/* The four ledgers: deposits, withdrawals, their signed net, and the +/-
+              view. A ledger of deposits alone has no second side to switch to, so
+              the switch waits for a withdrawal to exist — **but not once the user
+              is holding one of the other three**. `hasWithdrawals` is scoped to
+              the window, and narrowing the range empties it, which deleted the
+              switch and left the user in a ledger they could not leave. The guard
+              is on the user's own selection, so it survives in both directions.
+              Nothing here changes the selection: an empty ledger stays empty. */}
               {(hasWithdrawals || flow !== 'deposits') && (
                 <Tabs value={flow} onValueChange={(value) => setFlow(value as Flow)}>
                   <TabsList>
@@ -641,7 +690,12 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 </Tabs>
               )}
 
-              {canSplit && (
+              {/* The +/- view is a total-ledger view: it draws the two
+                  directions of one month, so there is nothing to split by
+                  account behind it. The per-account control waits for the user
+                  to leave the +/- view, and `seriesMode` keeps their choice so
+                  returning to a single-flow ledger restores it. */}
+              {canSplit && flow !== 'split' && (
                 <Tabs value={splitMode} onValueChange={(value) => setSeriesMode(value as SeriesMode)}>
                   <TabsList>
                     <TabsTrigger value="total" aria-label={t('viewTotal')}>
@@ -671,6 +725,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
                 formatTick={formatTick}
                 colorOffset={chartColorOffset}
                 hideAxis={amountsHidden}
+                split={flow === 'split'}
                 onBarClick={handleBarClick}
               />
             </div>
@@ -687,6 +742,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
         periodLabel={drillDown?.periodLabel ?? ''}
         accountName={drillDown?.accountName}
         flow={flow}
+        direction={drillDown?.direction}
         total={drillDownTotal}
         currency={currency}
         amountsHidden={amountsHidden}

@@ -7,7 +7,7 @@
 
 
 /** Which money the page is showing at the moment. */
-export type Flow = 'deposits' | 'withdrawals' | 'net';
+export type Flow = 'deposits' | 'withdrawals' | 'net' | 'split';
 
 export type Granularity = 'month' | 'day' | 'year';
 
@@ -85,7 +85,7 @@ export function selectFlow(
   records: ContributionRecord[],
   flow: Flow,
 ): ContributionRecord[] {
-  if (flow !== 'net') return records.filter((record) => record.flow === flow);
+  if (flow !== 'net' && flow !== 'split') return records.filter((record) => record.flow === flow);
   return records;
 }
 
@@ -111,6 +111,7 @@ export function signedAmount(record: ContributionRecord, flow: Flow): number {
     case 'withdrawals':
       return -record.amount;
     case 'net':
+    case 'split':
       return record.flow === 'withdrawals' ? -record.amount : record.amount;
     default:
       return record.amount;
@@ -212,6 +213,69 @@ export function bucketize(
         key,
         label: labelFor(record.date, granularity, locale),
         total: signed,
+        count: 1,
+      });
+    }
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * One period of the +/- view: deposits and withdrawals as separate totals.
+ *
+ * Unlike `Bucket`, which carries one signed total, this keeps both directions
+ * apart so the chart can draw deposits above the axis and withdrawals below it.
+ * `net` is their difference, for the hero and the tooltip summary.
+ */
+export interface DirectionBucket {
+  key: string;
+  label: string;
+  /** Sum of deposits in this period; always >= 0. */
+  depositsTotal: number;
+  /** Sum of withdrawals in this period; always >= 0. */
+  withdrawalsTotal: number;
+  /** depositsTotal - withdrawalsTotal. */
+  net: number;
+  /** Total number of transactions (deposits + withdrawals). */
+  count: number;
+}
+
+/**
+ * Groups records into buckets for the +/- view.
+ *
+ * Every record contributes to its direction's total: deposits add to
+ * `depositsTotal`, withdrawals to `withdrawalsTotal`. The two are never
+ * netted inside a bucket, because the whole point of the view is to show them
+ * as separate bars. `net` is their difference, for the hero and tooltip.
+ */
+export function bucketizeSplit(
+  records: ContributionRecord[],
+  granularity: Granularity,
+  locale = 'en',
+): DirectionBucket[] {
+  const buckets = new Map<string, DirectionBucket>();
+
+  for (const record of records) {
+    const key = periodKey(record.date, granularity);
+    const existing = buckets.get(key);
+
+    if (existing) {
+      if (record.flow === 'withdrawals') {
+        existing.withdrawalsTotal += record.amount;
+      } else {
+        existing.depositsTotal += record.amount;
+      }
+      existing.net = existing.depositsTotal - existing.withdrawalsTotal;
+      existing.count += 1;
+    } else {
+      const isWithdrawal = record.flow === 'withdrawals';
+      buckets.set(key, {
+        key,
+        label: labelFor(record.date, granularity, locale),
+        depositsTotal: isWithdrawal ? 0 : record.amount,
+        withdrawalsTotal: isWithdrawal ? record.amount : 0,
+        net: isWithdrawal ? -record.amount : record.amount,
         count: 1,
       });
     }
@@ -526,8 +590,8 @@ export function selectDrillDownRecords(
   return filterByRange(records, window).filter((record) => {
     if (periodKey(record.date, granularity) !== selection.periodKey) return false;
     if (selection.accountId && record.accountId !== selection.accountId) return false;
-    // The net view lists both directions; the single-flow views list only theirs.
-    if (flow !== 'net' && record.flow !== flow) return false;
+    // The net and split views list both directions; the single-flow views list only theirs.
+    if (flow !== 'net' && flow !== 'split' && record.flow !== flow) return false;
     return true;
   });
 }

@@ -27,6 +27,11 @@ export interface DrillDownPanelProps {
   accountName?: string;
   /** Which ledger the panel is listing; the net view mixes both directions. */
   flow?: Flow;
+  /**
+   * For the +/- view: which direction was clicked. When set, the panel lists
+   * only that direction's records and the caption names it.
+   */
+  direction?: 'deposits' | 'withdrawals';
   /** Total amount for the period/account. */
   total: number;
   /** Currency code. */
@@ -51,6 +56,7 @@ export function DrillDownPanel({
   periodLabel,
   accountName,
   flow = 'deposits',
+  direction,
   total,
   currency,
   amountsHidden,
@@ -74,9 +80,12 @@ export function DrillDownPanel({
     ? `${t('detailsFor')} ${accountName} · ${periodLabel}`
     : `${t('detailsFor')} ${periodLabel}`;
 
-  /** A caption distinguishing the three ledgers on the same panel. */
-  const flowCaption =
-    flow === 'withdrawals' ? t('viewWithdrawals')
+  /** A caption distinguishing the ledgers on the same panel. In the +/- view,
+   *  the direction the user clicked overrides the flow, so the panel names
+   *  the bar that was clicked rather than the mixed ledger. */
+  const flowCaption = direction
+    ? direction === 'deposits' ? t('viewDeposits') : t('viewWithdrawals')
+    : flow === 'withdrawals' ? t('viewWithdrawals')
     : flow === 'net' ? t('viewNet')
     : t('viewDeposits');
 

@@ -36,6 +36,39 @@ async function loadTs(entry) {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
+/* -------------------------------------------------------------------- i18n */
+
+// A new user-facing string has to land in every bundle, or the host silently
+// falls back to English for one language while the rest of the UI is Polish.
+// The +/- view added `viewSplit`, and nothing checked it.
+//
+// Plural suffixes are stripped before the comparison: Polish has four plural
+// forms (`_one`, `_few`, `_many`, `_other`) where English has two, so an
+// exact key match would fail on a bundle that is correct. What must line up
+// is the base name of every key.
+const baseKey = (key) => key.replace(/_(one|few|many|other)$/, '');
+
+test('every translation key exists in both the en and pl bundles', async () => {
+  const { translations } = await loadTs('src/i18n.ts').then(({ mod }) => ({ ...mod }));
+
+  for (const locale of ['en', 'pl']) {
+    assert.ok(translations[locale], `${locale} bundle must exist`);
+  }
+
+  const en = [...new Set(Object.keys(translations.en).map(baseKey))].sort();
+  const pl = [...new Set(Object.keys(translations.pl).map(baseKey))].sort();
+
+  assert.deepEqual(pl, en, 'en and pl must carry the same base keys');
+  assert.ok(
+    Object.keys(translations.en).includes('viewSplit'),
+    'the +/- view label must be translated',
+  );
+  assert.ok(
+    Object.keys(translations.pl).includes('viewSplit'),
+    'the +/- view label must be translated in Polish too',
+  );
+});
+
 /* ------------------------------------------------------------------ intake */
 
 const { mod: intake, cleanup: cleanupIntake } = await loadTs('src/lib/intake.ts');
@@ -1223,6 +1256,99 @@ test('a withdrawals bucket is negative: the bar goes below the axis', () => {
   assert.equal(deposit.total, 100);
 });
 
+/* ------------------------------------------------------- split view (+/-) */
+
+test('bucketizeSplit separates deposits and withdrawals', () => {
+  const buckets = contributions.bucketizeSplit(
+    [
+      record('2026-01-05T00:00:00Z', 100),
+      record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+      record('2026-02-10T00:00:00Z', 200),
+      record('2026-02-20T00:00:00Z', 50, 'acc-1', 'Main', 'withdrawals'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets.length, 2);
+  assert.deepEqual(
+    buckets.map((b) => b.key),
+    ['2026-01', '2026-02'],
+  );
+
+  assert.equal(buckets[0].depositsTotal, 100);
+  assert.equal(buckets[0].withdrawalsTotal, 30);
+  assert.equal(buckets[0].net, 70);
+  assert.equal(buckets[0].count, 2);
+
+  assert.equal(buckets[1].depositsTotal, 200);
+  assert.equal(buckets[1].withdrawalsTotal, 50);
+  assert.equal(buckets[1].net, 150);
+  assert.equal(buckets[1].count, 2);
+});
+
+test('bucketizeSplit with only deposits yields zero withdrawals', () => {
+  const buckets = contributions.bucketizeSplit(
+    [record('2026-01-05T00:00:00Z', 100)],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets[0].depositsTotal, 100);
+  assert.equal(buckets[0].withdrawalsTotal, 0);
+  assert.equal(buckets[0].net, 100);
+});
+
+test('bucketizeSplit with only withdrawals yields zero deposits', () => {
+  const buckets = contributions.bucketizeSplit(
+    [record('2026-01-05T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals')],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets[0].depositsTotal, 0);
+  assert.equal(buckets[0].withdrawalsTotal, 40);
+  assert.equal(buckets[0].net, -40);
+});
+
+test('selectFlow returns all records for split view', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+  ];
+  const result = contributions.selectFlow(records, 'split');
+  assert.equal(result.length, 2);
+});
+
+test('signedAmount behaves like net for split flow', () => {
+  const deposit = record('2026-01-05T00:00:00Z', 100);
+  const withdrawal = record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals');
+  assert.equal(contributions.signedAmount(deposit, 'split'), 100);
+  assert.equal(contributions.signedAmount(withdrawal, 'split'), -30);
+});
+
+test('selectDrillDownRecords includes both flows for split', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+  ];
+  const result = contributions.selectDrillDownRecords(records, OPEN, { periodKey: '2026-01' }, 'month', 'split');
+  assert.equal(result.length, 2);
+});
+
+test('the split hero total is the net of deposits and withdrawals', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+    record('2026-02-10T00:00:00Z', 200),
+    record('2026-02-20T00:00:00Z', 50, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const buckets = contributions.bucketizeSplit(records, 'month', 'en');
+  const heroTotal = buckets.reduce((sum, b) => sum + b.net, 0);
+  assert.equal(heroTotal, 220); // (100-30) + (200-50) = 70 + 150
+});
+
 /* ---------------------------------------------------------- account scope */
 
 const { mod: accountScope, cleanup: cleanupAccountScope } = await loadTs('src/hooks/useAccountScope.ts');
@@ -1419,15 +1545,17 @@ test('the page has no alternate ledger to fall back to', async () => {
 
   // Every aggregation reads the state the user picked. `flow` is the one name
   // the hero, the buckets, the split and the drill-down are allowed to use.
-  for (const [fn, call] of [
-    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/],
-    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/],
-    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/],
-    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/],
+  // The one exception is the drill-down under the +/- view: there the clicked
+  // bar carries its direction, so `drillFlow` narrows the panel to that side.
+  for (const [fn, call, expected] of [
+    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/, 'drillFlow'],
   ]) {
     const match = source.match(call);
     assert.ok(match, `${fn} must be called`);
-    assert.equal(match[1], 'flow', `${fn} must aggregate the picked flow, not another one`);
+    assert.equal(match[1], expected, `${fn} must aggregate the picked flow, not another one`);
   }
 
   // Regression, found by reading the shipped diff rather than a test run: a
@@ -1443,7 +1571,14 @@ test('the page has no alternate ledger to fall back to', async () => {
     /\{\(hasWithdrawals \|\| flow !== 'deposits'\) && \(/,
     "the flow switch must survive an empty range in BOTH directions, or the user is stranded",
   );
-  assert.match(source, /\{canSplit && \(/, 'the per-account switch must be rendered');
+  // The per-account switch waits for a withdrawable ledger and for a
+  // single-flow view: the +/- view draws the two directions of one month, so
+  // there is no per-account stack behind it to switch to.
+  assert.match(
+    source,
+    /\{canSplit && flow !== 'split' && \(/,
+    'the per-account switch must be rendered, but not under the +/- view',
+  );
 
   // The guards above were not enough on their own, and that is the lesson worth
   // keeping: v1.2.7 shipped a guard on both switches and both still vanished on

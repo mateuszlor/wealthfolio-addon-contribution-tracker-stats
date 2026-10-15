@@ -33,6 +33,7 @@ export const translations: Record<string, AddonTranslationBundle> = {
     viewDeposits: 'Deposits',
     viewWithdrawals: 'Withdrawals',
     viewNet: 'Net',
+    viewSplit: '+/-',
     viewAllCurrency: 'ALL ({{code}})',
     conversionUnavailable:
       'Showing {{shown}} only — converting everything to the base currency is unavailable ({{reason}}).',
@@ -89,6 +90,7 @@ export const translations: Record<string, AddonTranslationBundle> = {
     viewDeposits: 'Wpłaty',
     viewWithdrawals: 'Wypłaty',
     viewNet: 'Netto',
+    viewSplit: '+/-',
     viewAllCurrency: 'WSZYSTKO ({{code}})',
     conversionUnavailable:
       'Pokazujemy tylko {{shown}} — przeliczanie wszystkiego na walutę bazową jest niedostępne ({{reason}}).',

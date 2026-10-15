@@ -30,16 +30,36 @@ This addon answers that question:
 - **Average per month** — the mean monthly pace across the selected range
 - **A bar chart** you can regroup by month, day or year
 
-### Withdrawals and the net flow
+### Withdrawals, the net flow and the +/- view
 
 Where the money was *added* is only half the ledger. Once your records include
 **withdrawals** — real money taken out of an investment or cash account — a
-**Wpłaty / Wypłaty / Netto** switch appears next to the grouping tabs:
+**Wpłaty / Wypłaty / Netto / +/-** switch appears next to the grouping tabs:
 
 - **Wpłaty** — the default view, exactly as before
 - **Wypłaty** — only withdrawals: total withdrawn, count, average per withdrawal
 - **Netto** — contributions minus withdrawals, so the chart shows how the
   ledger actually moved
+- **+/-** — each month drawn as **two separate bars**: deposits in green above
+  the axis, withdrawals in red below it
+
+The *+/-* view is the one that keeps both directions apart. *Netto* adds them up
+into a single bar per month, which tells you the answer but hides how much money
+moved in each direction; *+/-* shows both, so a quiet month with a small deposit
+and a large withdrawal no longer looks the same as a quiet month with neither.
+
+With more than one account, *+/-* can be split per account too: each month then
+draws **two stacks**, one above the axis and one below it, each broken into one
+segment per account. The summary still reports the **net** total. The tooltip adds
+the net under the two directions once you hover a month, and clicking a bar drills
+into **that direction only** — the green bar lists deposits, the red one lists
+withdrawals. A month with no withdrawals draws its green bar and no red one, rather
+than disappearing from the axis.
+
+Because a per-account tooltip row would otherwise read *"Obligacje · Deposits"*
+and truncate, the direction is stated **once** as a group header there while the
+legend spells it out in full — the legend is the only place with room for it, and
+it is what identifies the colours on the chart.
 
 Two definitions matter:
 
@@ -57,8 +77,8 @@ Each view shows what you asked for. Pick *Withdrawals* in a period that has none
 and you get an empty withdrawals ledger saying so — the page never swaps in a
 ledger that happens to have data.
 
-In the *Netto* view the drill-down panel lists both directions at once, with a
-`+` / `−` marker per row and a signed total.
+In the *Netto* and *+/-* views the drill-down panel lists both directions at
+once, with a `+` / `−` marker per row and a signed total.
 
 Two figures that look similar but are not: *average per deposit* divides the sum by the
 number of deposits, while *average per month* divides it by the number of months in the

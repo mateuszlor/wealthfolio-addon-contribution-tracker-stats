@@ -133,12 +133,12 @@ value for **every** account (zero included). That is what lets the chart render 
 stack: if a period were missing an account key, the segment order would change between
 columns.
 
-### Flows: deposits, withdrawals, net
+### Flows: deposits, withdrawals, net, +/-
 
-A `ContributionRecord` carries a `flow` (`'deposits' | 'withdrawals' | 'net'` — the union
-reuses the view name for the net case) and a **positive** `amount`. The sign is never stored:
-`signedAmount(record, flow)` applies it at read time, so no caller can double-negate and the
-drill-down can label each row with `+` / `−` straight from `record.flow`.
+A `ContributionRecord` carries a `flow` (`'deposits' | 'withdrawals' | 'net' | 'split'` — the
+union reuses the view name for the net case) and a **positive** `amount`. The sign is never
+stored: `signedAmount(record, flow)` applies it at read time, so no caller can double-negate and
+the drill-down can label each row with `+` / `−` straight from `record.flow`.
 
 `summarize` *signs* but does not *filter* — the callers must narrow with `selectFlow` first.
 The test `summarize signs withdrawals under the net view only` pins that contract.
@@ -187,6 +187,63 @@ The chart component is series-generic: one series renders a plain bar chart, sev
 a `stackId` and stack. Colours come from `seriesColor(index)`, a literal palette — never
 from a CSS token, for the reason described above. Only the topmost segment gets
 `radius`, otherwise every stacked segment shows rounded corners mid-column.
+
+### The +/- (split-flow) view
+
+`net` answers *how much* the ledger moved by signing both directions into one total per
+period. `split` answers *how* it moved by keeping the two directions apart, so the chart can
+draw deposits above the axis and withdrawals below it in the same column.
+
+`bucketizeSplit` is the aggregation, and it is **not** a variant of `bucketize`: a `Bucket`
+carries one signed `total`, which is exactly what this view must not do. It returns a
+`DirectionBucket { depositsTotal, withdrawalsTotal, net, count }`, where both totals are
+**unsigned** — the sign lives in which key the value is under, so `net` is their difference
+rather than a third thing that has to stay in sync. `signedAmount` treats `'split'` exactly
+like `'net'`, because for anything that needs a single number (the hero, the drill-down total)
+the answer is the same net figure.
+
+Two things about the rendering are deliberate:
+
+- **The page negates withdrawals when it builds the rows**, not the chart. recharts draws a
+  negative value below the axis, and that is the whole mechanism. The alternative — teaching
+  the chart a second stacking direction — is what the earlier stacked-withdrawals bug was.
+- **`split` disables the `stackId`.** `ContributionChart` computes
+  `stacked = series.length > 1 && !split`, so the two bars in a `+/-` column stay side by
+  side from the same axis instead of stacking onto each other.
+
+The drill-down resolves which direction a click belongs to from the `dataKey` (`deposits`
+or `withdrawals`) and carries it as `direction`, so `selectDrillDownRecords` narrows the
+panel to that side. Without it, clicking the green bar would list withdrawals too and
+disagree with the bar. `direction` also names the panel's caption.
+
+#### `+/-`, per account
+
+`bucketizeByDirection` returns, per period, **two maps** — `deposits` and `withdrawals`,
+each keyed by account id and each zero-filled everywhere the axis has a period. It is not a
+variant of `bucketizeByAccount` and cannot be replaced by two calls to it: that function
+signs its values by flow, so a second call would overwrite the first rather than add a
+second column, and it returns one value per account where this needs two. Both totals stay
+**unsigned** — the sign is which key the value is under — so the page negates withdrawals
+when it builds the chart rows and the chart never learns what a direction is.
+
+The chart draws two stacks, not one. `ChartSeries.stackId` names the stack a series belongs
+to and the page sets it to `'deposits'` and `'withdrawals'` separately; sharing one id
+would collapse the downward column onto the upward one and every month would read as
+"nothing was withdrawn". `ContributionChart` used to infer stacking from
+`series.length > 1 && !split`, which cannot express "two stacks" and silently fell back
+to one shared id the moment the +/- view grew a per-account mode. It now reads the id off
+each series, and rounds the last segment of *each* stack rather than of the whole series
+list.
+
+Three label fields exist because one proved unable to do the job. `label` is the tooltip
+row and must be short — it shares its line with an amount and truncates. `legendLabel`
+is the legend entry, which renders at full width with nothing competing for the line.
+`group` is a tooltip header, stated once above the rows that share it. The per-account
++/- view sets all three, and the sequence of defects that led there is worth keeping:
+`label` alone truncated to *"Obligacje · Withdraw…"*; widening the tooltip did not fix
+it; and shortening `label` then produced a legend reading *"IKE Millenium"* twice with no
+way to tell which entry was which, which is worse than a long tooltip row. `npm test`
+pins all three fields.
 
 ## Host API rules worth knowing
 
@@ -489,9 +546,14 @@ concentrated on the parts that fail silently:
 - the per-account split: grouping, zero-filling every account in every bucket, stable
   ordering, name supplied by a later activity, single-account and empty input, and the
   unknown-account collapse
+- the +/- view: `bucketizeSplit` keeping the two directions apart, the unsigned totals,
+  the hero being their net, and the drill-down narrowing to the clicked direction
+- the +/- view per account: `bucketizeByDirection` zero-filling both maps, the two
+  directions never netted inside an account, and the three separate label fields
 - interval windows and gap filling, including the bucket ceiling
 - the privacy mask: fixed width, no digits, separators or unit suffix, identical for every
   locale and every magnitude
+- i18n key parity between `en` and `pl`, so a string added to one bundle alone fails here
 - semver bumping
 
 UI behaviour is verified by importing the package into Wealthfolio. That includes the one

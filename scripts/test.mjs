@@ -36,6 +36,39 @@ async function loadTs(entry) {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
+/* -------------------------------------------------------------------- i18n */
+
+// A new user-facing string has to land in every bundle, or the host silently
+// falls back to English for one language while the rest of the UI is Polish.
+// The +/- view added `viewSplit`, and nothing checked it.
+//
+// Plural suffixes are stripped before the comparison: Polish has four plural
+// forms (`_one`, `_few`, `_many`, `_other`) where English has two, so an
+// exact key match would fail on a bundle that is correct. What must line up
+// is the base name of every key.
+const baseKey = (key) => key.replace(/_(one|few|many|other)$/, '');
+
+test('every translation key exists in both the en and pl bundles', async () => {
+  const { translations } = await loadTs('src/i18n.ts').then(({ mod }) => ({ ...mod }));
+
+  for (const locale of ['en', 'pl']) {
+    assert.ok(translations[locale], `${locale} bundle must exist`);
+  }
+
+  const en = [...new Set(Object.keys(translations.en).map(baseKey))].sort();
+  const pl = [...new Set(Object.keys(translations.pl).map(baseKey))].sort();
+
+  assert.deepEqual(pl, en, 'en and pl must carry the same base keys');
+  assert.ok(
+    Object.keys(translations.en).includes('viewSplit'),
+    'the +/- view label must be translated',
+  );
+  assert.ok(
+    Object.keys(translations.pl).includes('viewSplit'),
+    'the +/- view label must be translated in Polish too',
+  );
+});
+
 /* ------------------------------------------------------------------ intake */
 
 const { mod: intake, cleanup: cleanupIntake } = await loadTs('src/lib/intake.ts');
@@ -1223,6 +1256,227 @@ test('a withdrawals bucket is negative: the bar goes below the axis', () => {
   assert.equal(deposit.total, 100);
 });
 
+/* ------------------------------------------------------- split view (+/-) */
+
+test('bucketizeSplit separates deposits and withdrawals', () => {
+  const buckets = contributions.bucketizeSplit(
+    [
+      record('2026-01-05T00:00:00Z', 100),
+      record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+      record('2026-02-10T00:00:00Z', 200),
+      record('2026-02-20T00:00:00Z', 50, 'acc-1', 'Main', 'withdrawals'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets.length, 2);
+  assert.deepEqual(
+    buckets.map((b) => b.key),
+    ['2026-01', '2026-02'],
+  );
+
+  assert.equal(buckets[0].depositsTotal, 100);
+  assert.equal(buckets[0].withdrawalsTotal, 30);
+  assert.equal(buckets[0].net, 70);
+  assert.equal(buckets[0].count, 2);
+
+  assert.equal(buckets[1].depositsTotal, 200);
+  assert.equal(buckets[1].withdrawalsTotal, 50);
+  assert.equal(buckets[1].net, 150);
+  assert.equal(buckets[1].count, 2);
+});
+
+test('bucketizeSplit with only deposits yields zero withdrawals', () => {
+  const buckets = contributions.bucketizeSplit(
+    [record('2026-01-05T00:00:00Z', 100)],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets[0].depositsTotal, 100);
+  assert.equal(buckets[0].withdrawalsTotal, 0);
+  assert.equal(buckets[0].net, 100);
+});
+
+test('bucketizeSplit with only withdrawals yields zero deposits', () => {
+  const buckets = contributions.bucketizeSplit(
+    [record('2026-01-05T00:00:00Z', 40, 'acc-1', 'Main', 'withdrawals')],
+    'month',
+    'en',
+  );
+
+  assert.equal(buckets[0].depositsTotal, 0);
+  assert.equal(buckets[0].withdrawalsTotal, 40);
+  assert.equal(buckets[0].net, -40);
+});
+
+test('selectFlow returns all records for split view', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+  ];
+  const result = contributions.selectFlow(records, 'split');
+  assert.equal(result.length, 2);
+});
+
+test('signedAmount behaves like net for split flow', () => {
+  const deposit = record('2026-01-05T00:00:00Z', 100);
+  const withdrawal = record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals');
+  assert.equal(contributions.signedAmount(deposit, 'split'), 100);
+  assert.equal(contributions.signedAmount(withdrawal, 'split'), -30);
+});
+
+test('selectDrillDownRecords includes both flows for split', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+  ];
+  const result = contributions.selectDrillDownRecords(records, OPEN, { periodKey: '2026-01' }, 'month', 'split');
+  assert.equal(result.length, 2);
+});
+
+test('the split hero total is the net of deposits and withdrawals', () => {
+  const records = [
+    record('2026-01-05T00:00:00Z', 100),
+    record('2026-01-15T00:00:00Z', 30, 'acc-1', 'Main', 'withdrawals'),
+    record('2026-02-10T00:00:00Z', 200),
+    record('2026-02-20T00:00:00Z', 50, 'acc-1', 'Main', 'withdrawals'),
+  ];
+
+  const buckets = contributions.bucketizeSplit(records, 'month', 'en');
+  const heroTotal = buckets.reduce((sum, b) => sum + b.net, 0);
+  assert.equal(heroTotal, 220); // (100-30) + (200-50) = 70 + 150
+});
+
+/* ------------------------------------------------ per-account +/- (stacked) */
+
+test('bucketizeByDirection keeps the two directions apart per account', () => {
+  const result = contributions.bucketizeByDirection(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a', 'Broker'),
+      record('2026-01-20T00:00:00Z', 40, 'b', 'Bank', 'withdrawals'),
+      record('2026-02-10T00:00:00Z', 200, 'a', 'Broker'),
+      record('2026-02-20T00:00:00Z', 50, 'a', 'Broker', 'withdrawals'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.accounts.map((a) => a.id),
+    ['a', 'b'],
+    'largest absolute contributor first',
+  );
+
+  assert.deepEqual(
+    result.buckets.map((b) => b.key),
+    ['2026-01', '2026-02'],
+  );
+
+  // January: Broker deposits 100, Bank withdrawals 40. Nothing netted inside.
+  assert.equal(result.buckets[0].deposits.a, 100);
+  assert.equal(result.buckets[0].deposits.b, 0);
+  assert.equal(result.buckets[0].withdrawals.a, 0);
+  assert.equal(result.buckets[0].withdrawals.b, 40);
+  assert.equal(result.buckets[0].net, 60);
+  assert.equal(result.buckets[0].count, 2);
+
+  // February: Broker carries both directions in the same month.
+  assert.equal(result.buckets[1].deposits.a, 200);
+  assert.equal(result.buckets[1].withdrawals.a, 50);
+  assert.equal(result.buckets[1].deposits.b, 0);
+  assert.equal(result.buckets[1].withdrawals.b, 0);
+  assert.equal(result.buckets[1].net, 150);
+  assert.equal(result.buckets[1].count, 2);
+});
+
+test('bucketizeByDirection deposits and withdrawals stay unsigned', () => {
+  // The caller negates for the chart. If the lib signed them too, every
+  // withdrawal bar would come out positive and draw upwards.
+  const result = contributions.bucketizeByDirection(
+    [record('2026-01-20T00:00:00Z', 70, 'a', 'Broker', 'withdrawals')],
+    'month',
+    'en',
+  );
+
+  assert.equal(result.buckets[0].withdrawals.a, 70, 'unsigned, so the caller can negate');
+  assert.equal(result.buckets[0].deposits.a, 0);
+  assert.equal(result.buckets[0].net, -70);
+});
+
+test('bucketizeByDirection zero-fills every account in every period', () => {
+  const result = contributions.bucketizeByDirection(
+    [
+      record('2026-01-05T00:00:00Z', 100, 'a'),
+      record('2026-01-06T00:00:00Z', 30, 'b'),
+      record('2026-04-05T00:00:00Z', 70, 'a'),
+    ],
+    'month',
+    'en',
+  );
+
+  assert.deepEqual(
+    result.buckets.map((b) => b.key),
+    ['2026-01', '2026-02', '2026-03', '2026-04'],
+    'empty months are inserted',
+  );
+
+  for (const bucket of result.buckets) {
+    assert.ok('a' in bucket.deposits && 'a' in bucket.withdrawals);
+    assert.ok('b' in bucket.deposits && 'b' in bucket.withdrawals);
+  }
+
+  // Zero-fill means present-and-zero, not absent: February carries nothing for
+  // either account and must still expose both keys rather than dropping them.
+  assert.equal(result.buckets[1].deposits.a, 0);
+  assert.equal(result.buckets[1].deposits.b, 0);
+  assert.equal(result.buckets[1].withdrawals.a, 0);
+  assert.equal(result.buckets[1].withdrawals.b, 0);
+  assert.equal(result.buckets[1].count, 0);
+
+  // And January survived the fill, so the zeros did not overwrite real data.
+  assert.equal(result.buckets[0].deposits.a, 100);
+  assert.equal(result.buckets[0].deposits.b, 30);
+  assert.equal(result.buckets[3].deposits.a, 70);
+});
+
+test('bucketizeByDirection on nothing yields no accounts and no buckets', () => {
+  assert.deepEqual(contributions.bucketizeByDirection([], 'month', 'en'), {
+    accounts: [],
+    buckets: [],
+  });
+});
+
+test('a stacked +/- series key resolves to its account and direction', () => {
+  const accounts = [
+    { id: 'acc-1', name: 'Main' },
+    { id: 'acc-2', name: 'Pension' },
+  ];
+
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'd0').id, 'acc-1');
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'w0').id, 'acc-1');
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'd1').id, 'acc-2');
+  assert.equal(contributions.resolveAccountFromSeriesKey(accounts, 'w1').id, 'acc-2');
+
+  assert.equal(contributions.directionOfSeriesKey('d0'), 'deposits');
+  assert.equal(contributions.directionOfSeriesKey('w3'), 'withdrawals');
+  assert.equal(contributions.directionOfSeriesKey('s0'), undefined);
+  assert.equal(contributions.directionOfSeriesKey('total'), undefined);
+});
+
+test('an out-of-range or malformed stacked key resolves to nothing', () => {
+  const accounts = [{ id: 'acc-1', name: 'Main' }];
+
+  for (const key of ['d7', 'w7', 'd', 'w', 'dx', 'd-1']) {
+    assert.equal(
+      contributions.resolveAccountFromSeriesKey(accounts, key),
+      undefined,
+      `${key} must not fall through to "every account"`,
+    );
+  }
+});
+
 /* ---------------------------------------------------------- account scope */
 
 const { mod: accountScope, cleanup: cleanupAccountScope } = await loadTs('src/hooks/useAccountScope.ts');
@@ -1359,6 +1613,43 @@ test('the gate is open, but not ready, before the bridge answers', () => {
   assert.equal(state.degraded, false, 'loading is not a degraded bridge');
 });
 
+test('the per-account +/- view stacks the two directions separately', async () => {
+  // Regression guard for the shape that matters: deposits and withdrawals must
+  // be two stacks, not one. Sharing an id would collapse the downward column
+  // onto the upward one and every month would read as "nothing was withdrawn".
+  const raw = await readFile(path.join(ROOT, 'src/components/ContributionStatsPage.tsx'), 'utf8');
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  assert.match(source, /bucketizeByDirection\(flowRecords/, 'the per-account +/- split is wired');
+  assert.match(source, /stackId: 'deposits'/, "deposits series must name their own stack");
+  assert.match(source, /stackId: 'withdrawals'/, "withdrawals series must name a *different* stack");
+
+  // The tooltip row is the account alone, so it fits on the line; the legend
+  // spells the direction out because it has the room and it is the chart's key.
+  // Sharing one label gave a legend reading "IKE Millenium" twice.
+  assert.match(source, /label: account\.name,/, 'the tooltip row is the account, not account · direction');
+  assert.match(source, /legendLabel: `\$\{account\.name\} · \$\{t\('viewDeposits'\)\}`/);
+  assert.match(source, /legendLabel: `\$\{account\.name\} · \$\{t\('viewWithdrawals'\)\}`/);
+  assert.match(source, /group: t\('viewDeposits'\)/, 'the direction is also a tooltip group header');
+  assert.match(source, /group: t\('viewWithdrawals'\)/);
+
+  // The legend half of that split lives in the chart, which owns the payload it
+  // hands `ChartLegendContent`.
+  const chart = (
+    await readFile(path.join(ROOT, 'src/components/ContributionChart.tsx'), 'utf8')
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(chart, /legendLabel \?\? item\.label/, 'the legend prefers the legend label when there is one');
+  assert.match(chart, /stackId=\{stackOf\(item\)\}/, 'the stack id is explicit per series, not inferred');
+  assert.doesNotMatch(chart, /stacked \?/, 'stacking must not be inferred from the split flag any more');
+
+  const stacks = [...source.matchAll(/stackId: '([a-z]+)'/g)].map((m) => m[1]);
+  assert.equal(new Set(stacks).size, 2, 'there must be exactly two distinct stacks');
+
+  // Withdrawals are negated where the row is built, not in the chart: that is
+  // what puts them below the axis.
+  assert.match(source, /row\[`w\$\{index\}`\] = -\(/, 'the page negates withdrawals, the chart does not');
+});
+
 /* ------------------------------------------------- no silent ledger swap */
 
 test('a requested-but-unavailable conversion explains itself instead of reading zero', async () => {
@@ -1419,15 +1710,17 @@ test('the page has no alternate ledger to fall back to', async () => {
 
   // Every aggregation reads the state the user picked. `flow` is the one name
   // the hero, the buckets, the split and the drill-down are allowed to use.
-  for (const [fn, call] of [
-    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/],
-    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/],
-    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/],
-    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/],
+  // The one exception is the drill-down under the +/- view: there the clicked
+  // bar carries its direction, so `drillFlow` narrows the panel to that side.
+  for (const [fn, call, expected] of [
+    ['selectFlow', /selectFlow\(scoped, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['summarize', /summarize\(flowRecords, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['bucketizeByAccount', /bucketizeByAccount\(flowRecords, granularity, locale, ([A-Za-z_$][\w$]*)\)/, 'flow'],
+    ['selectDrillDownRecords', /selectDrillDownRecords\(currencyRecords, range, drillDown, granularity, ([A-Za-z_$][\w$]*)\)/, 'drillFlow'],
   ]) {
     const match = source.match(call);
     assert.ok(match, `${fn} must be called`);
-    assert.equal(match[1], 'flow', `${fn} must aggregate the picked flow, not another one`);
+    assert.equal(match[1], expected, `${fn} must aggregate the picked flow, not another one`);
   }
 
   // Regression, found by reading the shipped diff rather than a test run: a
@@ -1443,7 +1736,14 @@ test('the page has no alternate ledger to fall back to', async () => {
     /\{\(hasWithdrawals \|\| flow !== 'deposits'\) && \(/,
     "the flow switch must survive an empty range in BOTH directions, or the user is stranded",
   );
-  assert.match(source, /\{canSplit && \(/, 'the per-account switch must be rendered');
+  // The per-account switch must stay reachable under the +/- view as well:
+  // it stacks each direction per account, which is a real mode there, not a
+  // dead control.
+  assert.match(
+    source,
+    /\{canSplit && \(/,
+    'the per-account switch must be rendered, including under the +/- view',
+  );
 
   // The guards above were not enough on their own, and that is the lesson worth
   // keeping: v1.2.7 shipped a guard on both switches and both still vanished on

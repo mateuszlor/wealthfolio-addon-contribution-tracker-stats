@@ -84,8 +84,22 @@ maintainer time. This applies to **review sessions** same as push/PR creation.
 When work has to land on `main`, base it on the fetched `main`, not on whatever the branch
 happened to start from.
 
-## Layout of the code
+**Never push directly to `main`, even as a fast-forward.** `main` is updated only through a
+pull request that has passed CI: a direct push to `main` bypasses required status checks —
+GitHub will print `Bypassed rule violations for refs/heads/main` (admin actors are exempt),
+so the bypass ships silently and is only noticed afterwards. The symptom that led here: a
+docs-only commit was pushed to `main` on 2026-10-16 with no status checks run at all, and
+the violation was visible only in the remote push output.
 
+Mechanical protection must back the rule up: in the GitHub branch rule for `main`, uncheck
+"Allow administrators to bypass required pull requests" (or set rulesets with no bypass
+actors), so a direct `git push origin main` is rejected server-side. `.git/hooks/pre-push`
+only guards force-rewriting; it is not the right place to refuse main pushes, because
+manual fast-forwards for the maintainer will happen legitimately and must not be taken away.
+If a direct push ever slips through, record it in this file (the date above) and prefer a
+follow-up PR to a silent amend — force-push is never the correction.
+
+## Layout of the code
 - `src/lib/*.ts` — pure, React-free and SDK-free aggregation and formatting. Everything
   testable belongs here, including selectors: a selector living in a component cannot be
   covered by `scripts/test.mjs`.

@@ -79,6 +79,12 @@ Concretely:
 - `git revert` is the way to undo something already pushed.
 - If a rewrite is genuinely unavoidable, delete the remote branch first — an explicit,
   separate act — and push again. That is a decision for the maintainer, not a default.
+- **Never push directly to `main`, even as a fast-forward.** `main` is updated only
+  through a pull request that has passed CI; a direct push bypasses required status checks
+  (the remote prints "Bypassed rule violations for refs/heads/main"). The local pre-push hook
+  only guards force-rewrites, so the server-side branch rule (no bypass actors) is what
+  enforces it. Symptom that led here: a docs-only commit landed on `main` on 2026-10-16
+  with no CI run at all.
 
 `.git/hooks/pre-push` enforces this locally: it refuses any ref whose remote tip is not an
 ancestor of the local commit. Hooks are not tracked by git, so after a fresh clone reinstall

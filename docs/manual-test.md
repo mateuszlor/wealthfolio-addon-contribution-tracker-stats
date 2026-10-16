@@ -230,6 +230,9 @@ The stacking regression rendered as **N thin bars per period, one per account**,
 one column divided into N segments. On the host it is a one-look question, so ask for the
 look and use the read below as a second opinion, never as the verdict:
 
+**First put the chart into *Per account* mode.** In the total view there is one series, so
+the read below passes whether or not stacking works.
+
 ```js
 await tools["browser"].evaluate({ tabID, frameID, script: `(() => {
   const boxes = [...document.querySelectorAll('.recharts-bar-rectangle')]
@@ -240,9 +243,12 @@ await tools["browser"].evaluate({ tabID, frameID, script: `(() => {
 })()` })
 ```
 
-With more than one account, *Per account* must report **one column per period** with
-`bars` equal to the number of accounts that have a value in it. `bars > columns` by a
-factor of the account count is the regression, back again.
+With more than one account, *Per account* must report `columns` equal to the **number
+of periods on the axis**, with `bars` equal to the number of account segments drawn inside
+them. `bars > columns` is the **correct** shape for a stacked column - several segments
+share one `left`. **The regression is `columns === bars`**: every series drew at its own
+offset inside the band. For the `+/-` per-account view, which draws two stacks per period,
+`columns` is twice the number of periods and the same rule holds.
 
 **If the read says one column and the screen shows N thin bars, believe the screen** and say
 so — a stale frame, an old build or a scoped selector has cost this project a session

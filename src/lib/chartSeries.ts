@@ -12,7 +12,7 @@
  * Measured in the installed recharts (3.10.1), not assumed:
  *
  * - `state/types/StackedGraphicalItem.js` — `isStacked` is
- *   `'stackId' in item && item.stackId != null`. `stackId: undefined` is not
+ *   `'stackId' in item && item.stackId != null && item.dataKey != null`. `stackId: undefined` is not
  *   "neutral", it is **not stacked**.
  * - `state/selectors/combiners/combineBarSizeList.js` — a bar with no stack id
  *   lands in `unstackedBars` and gets its own `sizeList` entry.

@@ -184,10 +184,12 @@ are normalised in the lib (`readAccount` in `intake.ts`, plus a guard in
 `bucketizeByAccount`) rather than at the call sites, because a record that reaches the lib
 without an account would otherwise produce a series literally named `undefined`.
 
-The chart component is series-generic: one series renders a plain bar chart, several share
-a `stackId` and stack. Colours come from `seriesColor(index)`, a literal palette — never
-from a CSS token, for the reason described above. Only the topmost segment gets
-`radius`, otherwise every stacked segment shows rounded corners mid-column.
+The chart component is series-generic: it renders whatever series it is handed and reads the
+stack id off each one. Which series exist, and which stack each belongs to, is a view-level
+decision — which series and stacks a view draws — made in `src/lib/chartSeries.ts`, not here.
+Colours come from `seriesColor(index)`, a literal palette — never from a CSS token, for the
+reason described above. Only the topmost segment gets `radius`, otherwise every stacked
+segment shows rounded corners mid-column.
 
 Which series a view draws, and which stack each belongs to, is decided in
 `src/lib/chartSeries.ts` rather than in the page. It was a `useMemo` inside
@@ -195,7 +197,7 @@ Which series a view draws, and which stack each belongs to, is decided in
 drew one narrow bar per account inside the band instead of one stacked column — with no
 test able to see it from inside a component. Measured in recharts 3.10.1, not assumed:
 
-- `isStacked` is `'stackId' in item && item.stackId != null`, so `stackId: undefined` is
+- `isStacked` is `'stackId' in item && item.stackId != null && item.dataKey != null`, so `stackId: undefined` is
   **not** the neutral case — it is *not stacked*.
 - a bar with no stack id gets its own `sizeList` entry, hence its own `offset` inside the
   band: `(size + barGap) * i`. That is the side-by-side layout.

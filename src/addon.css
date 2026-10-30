@@ -103,3 +103,18 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
+
+/* Host Tailwind builds its sandbox stylesheet from its own sources, so arbitrary
+   values such as `h-[280px]` or `text-[10px]` never reach the addon. Declare
+   them here as plain CSS instead. */
+.cts-chart {
+  height: 280px;
+}
+
+.cts-hero-label {
+  font-size: 10px;
+}
+
+.cts-hero-total {
+  min-width: 9ch;
+}

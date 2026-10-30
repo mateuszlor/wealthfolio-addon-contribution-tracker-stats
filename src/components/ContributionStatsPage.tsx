@@ -62,7 +62,7 @@ const FLOW_LABEL_KEY: Record<Flow, string> = {
 
 /** Labels the hero, matching the spending reports' small caps. */
 const HERO_LABEL_CLASS =
-  'text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70';
+  'cts-hero-label font-semibold uppercase tracking-wide text-muted-foreground/70';
 
 /** This month, `YYYY-MM` — the month switcher's landing selection. */
 function currentMonthKey(): string {
@@ -510,7 +510,7 @@ function ContributionStatsPageContent({ ctx }: ContributionStatsPageProps) {
             </p>
             {/* The host mask is shorter than a real total, so the slot keeps a
                 minimum width and toggling does not shift the block. */}
-            <p className="tabular-nums min-w-[9ch] text-3xl font-bold">
+            <p className="tabular-nums cts-hero-total text-3xl font-bold">
               <AmountDisplay value={heroTotal} currency={currency} isHidden={amountsHidden} />
             </p>
             <p className="text-xs text-muted-foreground">{rangeLabel}</p>

@@ -30,6 +30,35 @@ interface HostRouteProps {
 }
 
 const enable: AddonEnableFunction = (ctx: AddonContext) => {
+  // The sandbox is an opaque origin: `localStorage` (and `sessionStorage`) throw
+  // on access. Several host components — `IntervalSelector` is one — read
+  // `localStorage` during render, which used to crash them (and log a
+  // SecurityError under F12). Provide a no-op store so those components degrade
+  // to their defaults instead of throwing. Persistence still goes through
+  // `ctx.api.storage`; this shim only stops the host's own reads from failing.
+  for (const key of ['localStorage', 'sessionStorage'] as const) {
+    try {
+      void (window as unknown as Record<string, unknown>)[key];
+    } catch {
+      try {
+        Object.defineProperty(window, key, {
+          value: {
+            getItem: () => null,
+            setItem: () => {},
+            removeItem: () => {},
+            clear: () => {},
+            key: () => null,
+            length: 0,
+          },
+          writable: true,
+          configurable: true,
+        });
+      } catch {
+        // Nothing to do: the property is not configurable on this host.
+      }
+    }
+  }
+
   // Register the addon translation bundles before the first render so the
   // sandbox i18n instance can resolve keys.
   registerTranslations(translations);

@@ -451,7 +451,7 @@ export function ContributionChart({
     >
       <ChartContainer
         config={buildConfig(series, colorOffset)}
-        className="h-[280px] w-full aspect-auto"
+        className="w-full aspect-auto cts-chart"
       >
         <BarChart data={rows} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
           <CartesianGrid vertical={false} />

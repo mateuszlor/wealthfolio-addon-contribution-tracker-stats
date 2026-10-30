@@ -14,15 +14,15 @@
     "chart"
   ],
   "icon": "chart-bar",
-  "sdkVersion": "3.9.0",
+  "sdkVersion": "3.11.0",
   "minWealthfolioVersion": "3.7.0",
   "main": "dist/addon.js",
   "enabled": true,
   "hostDependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "@wealthfolio/addon-sdk": "^3.9.0",
-    "@wealthfolio/ui": "^3.9.0",
+    "@wealthfolio/addon-sdk": "^3.11.0",
+    "@wealthfolio/ui": "^3.11.0",
     "recharts": "^3.7.0"
   },
   "permissions": [

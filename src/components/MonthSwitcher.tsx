@@ -66,16 +66,18 @@ export function MonthSwitcher({ value, onChange, minMonth, locale }: MonthSwitch
       </Button>
 
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 min-w-28 justify-center px-2 text-sm font-medium"
-            aria-label={t('chooseMonth')}
-          >
-            {label}
-          </Button>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 min-w-28 justify-center px-2 text-sm font-medium"
+              aria-label={t('chooseMonth')}
+            />
+          }
+        >
+          {label}
         </PopoverTrigger>
         <PopoverContent align="start" className="w-auto p-3">
           <MonthYearPicker

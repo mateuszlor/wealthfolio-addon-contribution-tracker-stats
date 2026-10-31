@@ -12,20 +12,16 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      # 0. Zaloguj się do OpenCode przez GitHub OIDC.
-      #    client_id pochodzi z sekretu OPENCODE_CLIENT_ID (dodajesz go sam).
-      #    Zadna wartosc sekretu nie jest tu zapisana - tylko referencja.
       - name: Sign in to OpenCode
         env:
           AUDIENCE: https://opencode.ai/console
-          OPENCODE_CLIENT_ID: ${{ secrets.OPENCODE_CLIENT_ID }}
         run: |
           oidc=$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)
           token=$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
-            -d client_id="$OPENCODE_CLIENT_ID" \
+            -d client_id=sk_142ac20a-9008-4c72-8b96-fc80124c26da \
             -d subject_token="$oidc" | jq -r .access_token)
           echo "::add-mask::$token"
           echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
@@ -33,12 +29,11 @@ jobs:
       - name: Verify OpenCode token
         run: |
           if [ -z "${OPENCODE_API_KEY:-}" ] || [ "${OPENCODE_API_KEY}" = "null" ]; then
-            echo "::error::OpenCode sign-in failed: token is empty or null. Check OPENCODE_CLIENT_ID secret and id-token permission."
+            echo "::error::OpenCode sign-in failed: token is empty or null."
             exit 1
           fi
           echo "OpenCode sign-in OK (token masked)."
 
-      # 1. Wybierz darmowy model z najwiekszym kontekstem (bez nemotron).
       - name: Pick free model with largest context
         id: pick
         env:
@@ -74,7 +69,6 @@ jobs:
           echo "model=${model:-beam-free}" >> $GITHUB_OUTPUT
           echo "Wybrano model: ${model:-beam-free}"
 
-      # 2. Uruchom OCR i opublikuj wyniki na PR.
       - uses: alibaba/open-code-review@v1.13.3
         with:
           llm_url: "https://opencode.ai/zen/go/v1"

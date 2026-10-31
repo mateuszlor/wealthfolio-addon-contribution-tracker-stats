@@ -5,16 +5,44 @@ on:
 
 permissions:
   pull-requests: write
+  id-token: write
+  contents: read
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      # 0. Zaloguj się do OpenCode przez GitHub OIDC.
+      #    client_id pochodzi z sekretu OPENCODE_CLIENT_ID (dodajesz go sam).
+      #    Zadna wartosc sekretu nie jest tu zapisana - tylko referencja.
+      - name: Sign in to OpenCode
+        env:
+          AUDIENCE: https://opencode.ai/console
+          OPENCODE_CLIENT_ID: ${{ secrets.OPENCODE_CLIENT_ID }}
+        run: |
+          oidc=$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)
+          token=$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="$OPENCODE_CLIENT_ID" \
+            -d subject_token="$oidc" | jq -r .access_token)
+          echo "::add-mask::$token"
+          echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
+
+      - name: Verify OpenCode token
+        run: |
+          if [ -z "${OPENCODE_API_KEY:-}" ] || [ "${OPENCODE_API_KEY}" = "null" ]; then
+            echo "::error::OpenCode sign-in failed: token is empty or null. Check OPENCODE_CLIENT_ID secret and id-token permission."
+            exit 1
+          fi
+          echo "OpenCode sign-in OK (token masked)."
+
       # 1. Wybierz darmowy model z najwiekszym kontekstem (bez nemotron).
       - name: Pick free model with largest context
         id: pick
         env:
-          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+          OPENCODE_GO_API_KEY: ${{ env.OPENCODE_API_KEY }}
         run: |
           set -e
           tmp=$(mktemp)
@@ -52,8 +80,16 @@ jobs:
           llm_url: "https://opencode.ai/zen/go/v1"
           llm_protocol: "openai"
           llm_model: ${{ steps.pick.outputs.model }}
-          llm_auth_token: ${{ secrets.OPENCODE_GO_API_KEY }}
+          llm_auth_token: ${{ env.OPENCODE_API_KEY }}
           llm_extra_headers: "x-opencode-session=ocr-github-actions"
           language: "English"
           sticky_summary: "true"
           effort: "medium"
+
+      - name: Show OCR error on failure
+        if: failure()
+        run: |
+          echo "=== OCR stderr log ==="
+          if [ -f /tmp/ocr-stderr.log ]; then cat /tmp/ocr-stderr.log; else echo "(brak pliku)"; fi
+          echo "=== OCR result (head) ==="
+          if [ -f /tmp/ocr-result.json ]; then head -c 2000 /tmp/ocr-result.json; else echo "(brak pliku)"; fi

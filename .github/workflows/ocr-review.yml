@@ -1,0 +1,60 @@
+name: OpenCodeReview (auto-select free model)
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write   # inline comments + sticky summary
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Zapytaj OpenCode Go o listę modeli i wybierz darmowy z największym kontekstem.
+      #    (Wykluczamy nemotron; przy remisie bierzemy najnowszy, potem alfabetycznie.)
+      - name: Pick free model with largest context
+        id: pick
+        env:
+          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+        run: |
+          set -e
+          tmp=$(mktemp)
+          if ! curl -fsS \
+               -H "Authorization: Bearer $OPENCODE_GO_API_KEY" \
+               -H "x-opencode-session: ocr-auto-select" \
+               https://opencode.ai/zen/go/v1/models -o "$tmp"; then
+            echo "model=beam-free" >> $GITHUB_OUTPUT
+            echo "::warning::Nie udalo sie pobrac listy modeli; uzywam beam-free"
+            exit 0
+          fi
+          model=$(node -e '
+            const fs = require("fs");
+            let data;
+            try { data = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+            catch (e) { console.log("beam-free"); process.exit(0); }
+            const free = (data.data || []).filter(m =>
+              m && m.id && !/nemotron/i.test(m.id) &&
+              (m.cost?.text?.input?.price ?? 1) === 0
+            );
+            if (!free.length) { console.log("beam-free"); process.exit(0); }
+            free.sort((a, b) =>
+              (b.limit?.context ?? 0) - (a.limit?.context ?? 0) ||
+              (b.created ?? 0) - (a.created ?? 0) ||
+              String(a.id).localeCompare(String(b.id))
+            );
+            console.log(free[0].id);
+          ' "$tmp")
+          echo "model=${model:-beam-free}" >> $GITHUB_OUTPUT
+          echo "Wybrano model: ${model:-beam-free}"
+
+      # 2. Uruchom OCR z wybranym modelem i opublikuj wyniki na PR.
+      - uses: alibaba/open-code-review@v1.13.3
+        with:
+          llm_url: "https://opencode.ai/zen/go/v1"
+          llm_protocol: "openai"
+          llm_model: ${{ steps.pick.outputs.model }}
+          llm_auth_token: ${{ secrets.OPENCODE_GO_API_KEY }}
+          llm_extra_headers: "x-opencode-session=ocr-github-actions"  # wymagane przez OpenCode Go
+          language: "English"
+          sticky_summary: "true"
+          effort: "medium"

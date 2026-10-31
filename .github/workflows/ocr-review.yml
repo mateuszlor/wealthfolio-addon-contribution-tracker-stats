@@ -5,17 +5,34 @@ on:
 
 permissions:
   pull-requests: write   # inline comments + sticky summary
+  id-token: write        # OIDC sign-in do OpenCode (bez sekretu w repo)
+  contents: read
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      # 0. Zaloguj się do OpenCode przez GitHub OIDC (krótkotrwały token, bez sekretu).
+      - name: Sign in to OpenCode
+        env:
+          AUDIENCE: https://opencode.ai/console
+        run: |
+          oidc=$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)
+          token=$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id=sk_142ac20a-9008-4c72-8b96-fc80124c26da \
+            -d subject_token="$oidc" | jq -r .access_token)
+          echo "::add-mask::$token"
+          echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
+
       # 1. Zapytaj OpenCode Go o listę modeli i wybierz darmowy z największym kontekstem.
       #    (Wykluczamy nemotron; przy remisie bierzemy najnowszy, potem alfabetycznie.)
       - name: Pick free model with largest context
         id: pick
         env:
-          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+          OPENCODE_GO_API_KEY: ${{ env.OPENCODE_API_KEY }}
         run: |
           set -e
           tmp=$(mktemp)
@@ -53,7 +70,7 @@ jobs:
           llm_url: "https://opencode.ai/zen/go/v1"
           llm_protocol: "openai"
           llm_model: ${{ steps.pick.outputs.model }}
-          llm_auth_token: ${{ secrets.OPENCODE_GO_API_KEY }}
+          llm_auth_token: ${{ env.OPENCODE_API_KEY }}
           llm_extra_headers: "x-opencode-session=ocr-github-actions"  # wymagane przez OpenCode Go
           language: "English"
           sticky_summary: "true"

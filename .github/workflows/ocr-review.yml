@@ -30,6 +30,15 @@ jobs:
           echo "::add-mask::$token"
           echo "OPENCODE_API_KEY=$token" >> "$GITHUB_ENV"
 
+      # 0b. Sprawdz, czy logowanie sie udalo - zeby blad byl widoczny od razu.
+      - name: Verify OpenCode token
+        run: |
+          if [ -z "${OPENCODE_API_KEY:-}" ] || [ "${OPENCODE_API_KEY}" = "null" ]; then
+            echo "::error::OpenCode sign-in failed: token is empty or null. Check OPENCODE_CLIENT_ID secret and id-token permission."
+            exit 1
+          fi
+          echo "OpenCode sign-in OK (token masked)."
+
       # 1. Wybierz darmowy model z najwiekszym kontekstem (bez nemotron).
       - name: Pick free model with largest context
         id: pick
@@ -77,3 +86,12 @@ jobs:
           language: "English"
           sticky_summary: "true"
           effort: "medium"
+
+      # Pokaz blad w logu workflow, jesli OCR padl (zamiast tylko w artefaktach).
+      - name: Show OCR error on failure
+        if: failure()
+        run: |
+          echo "=== OCR stderr log ==="
+          if [ -f /tmp/ocr-stderr.log ]; then cat /tmp/ocr-stderr.log; else echo "(brak pliku)"; fi
+          echo "=== OCR result (head) ==="
+          if [ -f /tmp/ocr-result.json ]; then head -c 2000 /tmp/ocr-result.json; else echo "(brak pliku)"; fi
